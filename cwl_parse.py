@@ -1,204 +1,241 @@
 from pathlib import Path
-import json
-import os
+from string import Template
+from typing import List
+
 import sys
-import re
 
 # import json5
 
 from cwl_utils.parser import load_document_by_uri, save
 
+class CWLFile:
+    def __init__(self, cwl_path) -> None:
+        self.cwl_path = cwl_path
+        self.cwl_object = None
+        self.cwl_class = None
+        self.cwl_inputs = None # List
+        self.cwl_outputs = None
+        self.cwl_steps = None
+        self.cwl_id = None
+        self.cwl_name = None
+        self.cwl_dependencies = None
+        self.cwl_dependency_aliases = None
+        self.cwl_basecommand = None
 
-class CWLParser:
-    def __init__(self, input: str) -> None:
-        self.remaining_input = input  # Strip first {}
-        self.current_token = None
-        self.current_chars = None  # Workaround for ${ and $(
-        self.current_open_list = []  # Stack of 'active' quotes or brackets
-        self.outfile = open("results.txt", "w")
-        self.quotes_and_brackets = ['"', "'", "[", "{", "}", "]", "${", "$(", ")"]
+        # Initialization methods
+        self.get_cwl_object(cwl_path)
+        self.get_id()
+        self.get_name()
+        self.get_class()
+        self.get_inputs()
+        self.get_outputs()
+        self.get_steps()
+        self.get_dependencies()
+        self.get_dependency_aliases()
+        self.get_basecommand()
+        # self.get_id()
 
-    def advance(self):
-        self.remaining_input = self.remaining_input[len(self.current_chars) :]
+    def get_cwl_object(self, cwl_path): 
+        # File Input - This is the only thing you will need to adjust or take in as an input to your function:
+        # cwl_file = Path("./gdc_dnaseq.bamfastq_align.workflow.cwl")  # or a plain string works as well
+        cwl_file = Path(cwl_path)
 
-    def get_chars(self):
-        if self.remaining_input[0] == "$":
-            self.current_chars = self.remaining_input[:2]  # Take ${ or $(
+        # Import CWL Object
+        cwl_obj = load_document_by_uri(cwl_file)
+
+        # Export CWL Object into a built-in typed object
+        saved_obj = save(cwl_obj)
+
+        self.cwl_object = saved_obj
+
+    def get_id(self):
+        self.cwl_id = self.cwl_object['id']
+
+    def get_name(self):
+        self.cwl_name = self.cwl_object['id'].split('#')[-1]
+
+    def get_class(self):
+        self.cwl_class = self.cwl_object['class']
+
+    def get_inputs(self):
+        self.cwl_inputs = self.cwl_object['inputs']
+
+    def get_outputs(self):
+        self.cwl_outputs = self.cwl_object['outputs']
+
+    def get_steps(self):
+        if 'steps' in self.cwl_object:
+            self.cwl_steps = self.cwl_object['steps']
         else:
-            self.current_chars = self.remaining_input[0]
-        return self.current_chars
+            assert(self.cwl_object['class'] != "Workflow")
 
-    def emit_token(self):
-        self.outfile.write(self.current_token + "\n")
+    def get_dependencies(self):
+        if self.cwl_steps:
+            self.cwl_dependencies = [e['run'] for e in self.cwl_steps]
 
-    def current_open_pair(self):
-        # assert(self.current_open_list)
-        if self.current_open_list:
-            current_open = self.current_open_list[-1]
-            if current_open in "'\"":
-                return current_open  # Same
+    def get_dependency_aliases(self):
+        if self.cwl_steps:
+            dep_aliases = {}
+            for e in self.cwl_steps:
+                dep_aliases[e['run']] = e['id']
+
+            self.cwl_dependency_aliases = dep_aliases
+
+    def get_basecommand(self):
+        if "baseCommand" in self.cwl_object:
+            self.cwl_basecommand = self.cwl_object["baseCommand"]
+
+    def print_cwl_object(self):
+        print(self.cwl_object)
+
+    def print_class(self):
+        print(self.cwl_object['class'])
+
+    def print_inputs(self):
+        print(self.cwl_object['inputs'])
+
+        for e in self.cwl_inputs:
+            print(e)
+
+    def print_id(self):
+        print(self.cwl_object['id'])
+
+    def print_outputs(self):
+        print(self.cwl_object['outputs'])
+
+    def print_steps(self):
+        print(self.cwl_steps)
+
+    def print_dependencies(self):
+        for e in self.cwl_dependencies:
+            print(e)
+
+    def print_body(self):
+        if self.cwl_class == "Workflow":
+            self.print_template_workflow()
+        else:
+            self.print_template_process()
+
+    def print_template_process(self):
+        in_template = open("./templates/template_process.txt", "r")
+        template = Template(in_template.read())
+
+        pr_input_list = [
+            e['id'] for e in self.cwl_inputs
+        ]
+
+        pr_output_list = [
+            e['id'] for e in self.cwl_outputs
+        ]
+
+        
+        script = self.construct_script()
+        # pr_script_list = ' '.join(self.cwl_basecommand) if self.cw
+
+        pr_input = self.format_list(pr_input_list)
+        pr_output = self.format_list(pr_output_list)
+        pr_script = """
+        '''
+        {}
+        '''
+        """.format(script)
+        
+        subs = {
+            "process_id": str.upper(self.cwl_name),
+            "input": pr_input,
+            "output": pr_output,
+            "script": pr_script
+        }
+
+        result = template.substitute(subs) 
+
+        print(result)
+
+    def construct_script(self):
+        ret_script = ' '.join(self.cwl_basecommand)
+        # If inputs does not have position binding, 
+        # we assign the same priority using a big value.
+        for e in self.cwl_inputs:
+            if "inputBinding" in e:
+                if "position" in e:
+                    pass
             else:
-                if current_open == "{":
-                    return "}"
-                elif current_open == "[":
-                    return "]"
-                elif current_open == "${":
-                    return "}"
-                elif current_open == "$(":
-                    return ")"
-                else:
-                    assert False
-        else:
-            return None
+                e['inputBinding'] = {
+                    'position': 9999,
+                }
+        # Here we construct arguments for basecommand with the right order
+        sorted_inputs = sorted(self.cwl_inputs, key=lambda x: x['inputBinding']['position'])
+        arguments = [' ']
+        for e in sorted_inputs:
+            assert('inputBinding' in e)
+            if 'prefix' in e['inputBinding']:
+                arguments.append(e['inputBinding']['prefix'])
+            arguments.append("${{{}}}".format(e['id']))
+        
+        print(arguments)
+        ret_script += ' '.join(arguments)
 
-    def get_current_token(self):
-        self.current_token = None
-        if self.get_chars() in self.quotes_and_brackets:
-            print("Got quotes and brackets: {}".format(self.get_chars()))
-            if not self.current_open_list:
-                self.current_token = self.get_chars()
-                self.current_open_list.append(self.get_chars())
-            else:
-                if self.get_chars() == self.current_open_pair():
-                    self.current_token = self.get_chars()
-                    self.current_open_list.pop()
-                else:
-                    self.current_token = self.get_chars()
-                    self.current_open_list.append(self.get_chars())
-            self.advance()
-        else:
-            if self.get_chars() in ":,":
-                self.advance()
-                self.advance()
-            else:
-                token = ""
-                while not self.get_chars() in self.quotes_and_brackets:
-                    token += self.get_chars()
-                    self.advance()
-                self.current_token = token
-        print(
-            "Key open: {}, Current token: {}".format(
-                self.current_open_list, self.current_token
-            )
-        )
+        return ret_script
 
-    def get_key(self):
-        print("Get Key, curr char ", self.get_chars())
-        if self.get_chars() == ",":
-            self.advance()
-            self.advance()
-        if self.get_chars() == "{":
-            self.advance()
-        if self.get_chars() == "}":
-            self.advance()
-            self.advance()
-            self.advance()
-            self.advance()
-        if self.get_chars() == "]":
-            self.advance()
-            self.advance()
-            self.advance()
-        if self.get_chars() == "[":
-            self.advance()
-            self.advance()
+    def print_template_workflow(self):
 
-        self.current_open_list.append(self.get_chars())
-        self.advance()
-        key = ""
-        while not self.get_chars() == self.current_open_pair():
-            key += self.get_chars()
-            self.advance()
-        self.current_open_list.pop()
-        self.advance()
+        in_template = open("./templates/template_workflow.txt", "r")
+        template = Template(in_template.read())
+        
+        wf_take_list = [
+            e['id'] for e in self.cwl_inputs
+        ]
 
-        return key
+        wf_main_list = [
+            "{}()".format(e['id'].upper()) for e in self.cwl_steps
+        ]
 
-    def get_val(self):
-        print("Get val, curr char ", self.get_chars())
-        self.advance()  # : to <whitespace>
-        self.advance()  # <whitespace> to ??, checked below
-        val = ""
+        wf_emit_list = [
+            e['id'] for e in self.cwl_outputs
+        ]
 
-        if self.get_chars() == "'":
-            self.current_open_list.append(self.get_chars())
-            self.advance()
-            while not self.get_chars() == self.current_open_pair():
-                val += self.get_chars()
-                self.advance()
-            self.current_open_list.pop()
-            self.advance()
+        wf_take = self.format_list(wf_take_list)
+        wf_main = self.format_list(wf_main_list)
+        wf_emit = self.format_list(wf_emit_list)
 
-        elif self.get_chars() == "[":
-            val = self.process_array()
+        subs = {
+            "workflow_id": str.upper(self.cwl_name),
+            "take": wf_take,
+            "main": wf_main,
+            "emit": wf_emit
+        }
 
-        elif self.get_chars() == "T":
-            val = self.process_true()
+        result = template.substitute(subs) 
 
-        elif self.get_chars() == "F":
-            val = self.process_false()
+        print(result)
 
-        return val
+    def print_template_header(self):
+        for e in self.cwl_dependencies:
+            lib_name = e.strip().split('/')[-1].strip('.cwl')
+            lib_alias = self.cwl_dependency_aliases[e]
+            lib_source = e.replace(".cwl", ".nf")
+            print("INCLUDE {{ {} as {} }} from {}".format(
+                lib_name.upper(),
+                lib_alias.upper(),
+                lib_source
+            ))
 
-    def process_true(self):
-        ret = ""
-        while not ret == "True":
-            ret += self.get_chars()
-            self.advance()
+    def format_list(self, inp_list: List) -> str:
+        inp_type = '' if self.cwl_class == 'Workflow' else 'val '
+        
+        ret_str = inp_type + inp_list[0]
 
-        return ret
+        if len(inp_list) > 1:
+            for e in inp_list[1:]:
+                ret_str += "\n\t\t" + inp_type + e
 
-    def process_false(self):
-        ret = ""
-        while not ret == "False":
-            ret += self.get_chars()
-            self.advance()
+        return ret_str
 
-        return ret
+    def print_script(self):
+        # self.print_header()
+        self.print_body()
 
-    def process_array(self):
-        self.advance()
-        arr = []
-        if self.get_chars() == "{":
-            while not self.get_chars() == "]":
-                key = self.get_key()
-                val = self.get_val()
-                arr.append((key, val))
-        else:
-            arr_val = ""
-            while not self.get_chars() == "]":
-                arr_val += self.get_chars()
-                self.advance()
-            arr.append(arr_val)
-        return arr
-        # val = ""
-        # self.advance()
-        # if self.get_chars() == '{':
-        #     val += self.get_key()
-        #     val += self.get_val()
-        # else:
-        #     while self.get_chars() != ']':
-        #         val += self.get_chars()
-        #         self.advance()
-        #     self.advance()
-        # return val
-
-    def parse(self):
-        # self.get_current_token()
-        # if self.current_token:
-        #     self.emit_token()
-        self.remaining_input = self.remaining_input[1:-1]
-        while self.remaining_input:
-            key = self.get_key()
-            val = self.get_val()
-            print(key, val)
-            # self.get_current_token()
-            # if self.current_token:
-            #     self.emit_token()
-            # self.advance()
-        # print("Remaining input: {}".format(self.remaining_input))
-
-
-def convert_to_json(cwl_path):
+def convert_to_nextflow(cwl_path):
     # File Input - This is the only thing you will need to adjust or take in as an input to your function:
     # cwl_file = Path("./gdc_dnaseq.bamfastq_align.workflow.cwl")  # or a plain string works as well
     cwl_file = Path(cwl_path)
@@ -209,66 +246,18 @@ def convert_to_json(cwl_path):
     # Export CWL Object into a built-in typed object
     saved_obj = save(cwl_obj)
 
-    # Parsing
-    str_obj = str(saved_obj)
-
-    # Handling javascript
-
-    # First we mark the javascript part,
-    # then swap single-quote to double-quotes and vice versa
-    # print(str_obj)
-    re_mark_js = re.compile(r"(\"|\')\${(.+?)(\'|\")}")
-    groups = re_mark_js.search(str_obj)
-    mark_js_str = re_mark_js.sub(lambda x: x.group(0).replace("'", "@'"), str_obj)
-    mark_js_str = re_mark_js.sub(lambda x: x.group(0).replace('"', "'"), mark_js_str)
-    mark_js_str = re_mark_js.sub(lambda x: x.group(0).replace("@'", '"'), mark_js_str)
-  
-    # Also swap single quote to double quotes and vice versa
-    mark_js_str = mark_js_str.replace("'", "@'")
-    mark_js_str = mark_js_str.replace('"', "'")
-    mark_js_str = mark_js_str.replace("@'", '"')
-    # Suppress weird bug
-    mark_js_str = mark_js_str.replace("@\"", "\"")
-  
-    # If javascript is in the middle of json, its double quotes might not be enclosed
-    # re_unenclosed_dq = re.compile(r"(\"\$.+)},")
-    # mark_js_str = mark_js_str.replace("'},", "}\",")
-    # Handling the rest
-
-    # Change boolean into lowercases
-    mark_js_str = mark_js_str.replace(": False", ": false")
-    mark_js_str = mark_js_str.replace(": True", ": true")
-    # Handling expressionLib
-    re_expression_lib = re.compile(r"\"expressionLib\": (\[\".+?\"\])")
-    re_file_size_multiplier = re.compile(r", \'.+?\}.+\'")
-    if re_expression_lib.search(mark_js_str):
-        old_file_size_multiplier = re_file_size_multiplier.findall(
-            re_expression_lib.findall(mark_js_str)[0]
-        )[0]
-        new_file_size_multiplier = (
-            old_file_size_multiplier.replace("'", "@'").replace('"', "'").replace("@'", '"')
-        )
-        mark_js_str = mark_js_str.replace(old_file_size_multiplier, new_file_size_multiplier)
-    # Handling valueFrom javascripts
-    re_value_from = re.compile(r"\'\$\(.+?\)\'")
-    # re_value_from = re.compile(r"\"valueFrom\": \'\$\(.+?\)\'")
-    if re_value_from.search(mark_js_str):
-        old_value_froms = re_value_from.findall(mark_js_str)
-        new_value_froms = []
-        for old_vf in old_value_froms:
-            old_vf = old_vf.replace("'", "@'")
-            old_vf = old_vf.replace('"', "'")
-            new_vf = old_vf.replace("@'", '"')
-            new_value_froms.append(new_vf)
-
-        for old_vf, new_vf in zip(old_value_froms, new_value_froms):
-            mark_js_str = mark_js_str.replace(old_vf, new_vf)
-
-    # print(mark_js_str)
-    # print(mark_js_str[500:530])
-    final_json = json.loads(mark_js_str)
-
+    print(str_obj)
 
 if __name__ == "__main__":
     print(sys.argv[1])
-    convert_to_json(sys.argv[1])
+    cwl_path = sys.argv[1]
+
+    cwl_file = CWLFile(cwl_path)
+    if cwl_file.cwl_class == "Workflow":
+        cwl_file.print_steps()
+        cwl_file.print_dependencies()
+        cwl_file.print_template_header()
+        cwl_file.print_body()
+    else:
+        print(cwl_file.cwl_object)
+        cwl_file.print_body()
