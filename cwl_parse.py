@@ -2,6 +2,7 @@ from pathlib import Path
 from string import Template
 from typing import List
 
+import os
 import sys
 
 # import json5
@@ -17,6 +18,7 @@ class CWLFile:
         self.cwl_outputs = None
         self.cwl_steps = None
         self.cwl_id = None
+        self.container_uri = None
         self.cwl_name = None
         self.cwl_dependencies = None
         self.cwl_dependency_aliases = None
@@ -25,6 +27,7 @@ class CWLFile:
         # Initialization methods
         self.get_cwl_object(cwl_path)
         self.get_id()
+        self.get_container_uri()
         self.get_name()
         self.get_class()
         self.get_inputs()
@@ -50,6 +53,15 @@ class CWLFile:
 
     def get_id(self):
         self.cwl_id = self.cwl_object['id']
+
+    def get_container_uri(self):
+        container_uri = None
+        if "requirements" in self.cwl_object:
+            for req in self.cwl_object['requirements']:
+                if req['class'] == "DockerRequirement":
+                    container_uri = req['dockerPull']
+        
+        self.container_uri = container_uri
 
     def get_name(self):
         self.cwl_name = self.cwl_object['id'].split('#')[-1]
@@ -101,7 +113,8 @@ class CWLFile:
         print(self.cwl_object['id'])
 
     def print_outputs(self):
-        print(self.cwl_object['outputs'])
+        outputs = self.construct_outputs()
+        print(outputs)
 
     def print_steps(self):
         print(self.cwl_steps)
@@ -121,19 +134,20 @@ class CWLFile:
         template = Template(in_template.read())
 
         pr_input_list = [
-            e['id'] for e in self.cwl_inputs
+            e for e in self.cwl_inputs
         ]
 
         pr_output_list = [
-            e['id'] for e in self.cwl_outputs
+            e for e in self.cwl_outputs
         ]
 
         
         script = self.construct_script()
+        # pr_output = self.construct_outputs()
         # pr_script_list = ' '.join(self.cwl_basecommand) if self.cw
 
-        pr_input = self.format_list(pr_input_list)
-        pr_output = self.format_list(pr_output_list)
+        pr_input = self.format_input_list(pr_input_list)
+        pr_output = self.format_output_list(pr_output_list)
         pr_script = """
         '''
         {}
@@ -142,11 +156,14 @@ class CWLFile:
         
         subs = {
             "process_id": str.upper(self.cwl_name),
+            "container": "",  # By default we let container empty
             "input": pr_input,
             "output": pr_output,
             "script": pr_script
         }
-
+        if self.container_uri:
+            subs['container'] = "container \"{}\"\n".format(self.container_uri)
+        
         result = template.substitute(subs) 
 
         print(result)
@@ -164,7 +181,9 @@ class CWLFile:
                     'position': 9999,
                 }
         # Here we construct arguments for basecommand with the right order
-        sorted_inputs = sorted(self.cwl_inputs, key=lambda x: x['inputBinding']['position'])
+        # sorted_inputs = sorted(self.cwl_inputs, key=lambda x: x['inputBinding']['position'])
+        sorted_inputs = self.cwl_inputs
+        
         arguments = [' ']
         for e in sorted_inputs:
             assert('inputBinding' in e)
@@ -172,31 +191,44 @@ class CWLFile:
                 arguments.append(e['inputBinding']['prefix'])
             arguments.append("${{{}}}".format(e['id']))
         
-        print(arguments)
         ret_script += ' '.join(arguments)
 
         return ret_script
 
+    def construct_outputs(self):
+        ret_outputs = []
+        # for e in self.cwl_outputs:
+        #     output = {
+        #         'id': e['id'],
+        #         'glob': e['outputBinding']['glob'] if 'glob' in e['outputBinding'] else None,
+        #         'type': 
+
+
+        return ret_outputs
+
     def print_template_workflow(self):
 
-        in_template = open("./templates/template_workflow.txt", "r")
+        in_template = open("{}/templates/template_workflow.txt".format(os.getcwd()), "r")
         template = Template(in_template.read())
         
         wf_take_list = [
             e['id'] for e in self.cwl_inputs
         ]
+        wf_take_bindings = []
 
         wf_main_list = [
             "{}()".format(e['id'].upper()) for e in self.cwl_steps
         ]
+        wf_main_bindings = []
 
         wf_emit_list = [
             e['id'] for e in self.cwl_outputs
         ]
+        wf_emit_bindings = []
 
-        wf_take = self.format_list(wf_take_list)
-        wf_main = self.format_list(wf_main_list)
-        wf_emit = self.format_list(wf_emit_list)
+        wf_take = self.format_list(wf_take_list, wf_take_bindings)
+        wf_main = self.format_list(wf_main_list, wf_main_bindings)
+        wf_emit = self.format_list(wf_emit_list, wf_emit_bindings)
 
         subs = {
             "workflow_id": str.upper(self.cwl_name),
@@ -220,14 +252,52 @@ class CWLFile:
                 lib_source
             ))
 
-    def format_list(self, inp_list: List) -> str:
+    def format_input_list(self, inp_list: List) -> str:
+        ret_str = ""
+        for e in inp_list:
+            ret_str += self.get_inp_type(e) + " {}\n\t".format(e['id']) 
+        
+        return ret_str
+
+    def get_inp_type(self, inp):
+        inp_type = None
+        if self.cwl_class == 'Workflow':
+            inp_type = ''
+        else: # CommandLineTool or ExpressionTool
+            inp_type = "val"
+
+        return inp_type
+
+
+    def get_out_type(self, out):
+        out_type = None
+        if self.cwl_class == 'Workflow':
+            out_type = ''
+        else: # CommandLineTool or ExpressionTool
+            if out['type'] == "File" or "*" in out['outputBinding']['glob']:
+                out_type = "path"
+            else:
+                out_type = "val"
+
+        return out_type
+
+    def format_output_list(self, out_list: List) -> str:        
+        ret_str = ""
+        for e in out_list:
+            ret_str += self.get_out_type(e) + " \"{}\"\t, emit: {}\n\t".format(e['outputBinding']['glob'], e['id']) 
+        
+        return ret_str
+
+
+    def format_list(self, inp_list: List, bindings: List) -> str:
         inp_type = '' if self.cwl_class == 'Workflow' else 'val '
         
-        ret_str = inp_type + inp_list[0]
+        ret_str = inp_type + inp_list[0] + "({})".format(bindings[0]) if len(bindings) else ""
 
         if len(inp_list) > 1:
-            for e in inp_list[1:]:
-                ret_str += "\n\t\t" + inp_type + e
+            assert len(inp_list) == len(bindings)
+            for e, b in zip(inp_list[1:], bindings[1:]):
+                ret_str += "\n\t\t" + inp_type + e + "({})".format(b)
 
         return ret_str
 
@@ -249,7 +319,7 @@ def convert_to_nextflow(cwl_path):
     print(str_obj)
 
 if __name__ == "__main__":
-    print(sys.argv[1])
+    # print(sys.argv[1])
     cwl_path = sys.argv[1]
 
     cwl_file = CWLFile(cwl_path)
@@ -259,5 +329,4 @@ if __name__ == "__main__":
         cwl_file.print_template_header()
         cwl_file.print_body()
     else:
-        print(cwl_file.cwl_object)
         cwl_file.print_body()
