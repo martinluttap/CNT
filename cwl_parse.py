@@ -23,6 +23,7 @@ class CWLFile:
         self.cwl_dependencies = None
         self.cwl_dependency_aliases = None
         self.cwl_basecommand = None
+        self.count_opt_input_file = 0
 
         # Initialization methods
         self.get_cwl_object(cwl_path)
@@ -136,7 +137,6 @@ class CWLFile:
         in_template = open(file_dir + "/templates/template_process.txt", "r")
         template = Template(in_template.read())
 
-        print(self.cwl_inputs)
         pr_input_list = [
             e for e in self.cwl_inputs
         ]
@@ -147,8 +147,6 @@ class CWLFile:
 
         opt_declaration = self.construct_opt_declaration()
         script = self.construct_script()
-        # pr_output = self.construct_outputs() pr_script_list = '
-        # '.join(self.cwl_basecommand) if self.cw
 
         pr_input = self.format_input_list(pr_input_list)
         pr_output = self.format_output_list(pr_output_list)
@@ -187,16 +185,31 @@ class CWLFile:
         # ""
         declaration_lines = []
         for e in self.cwl_inputs:
-            assert('inputBinding' in e)
+            # assert('inputBinding' in e)
             prefix = ""
-            if 'prefix' in e['inputBinding']:
-                prefix = e['inputBinding']['prefix']
+            if 'inputBinding' in e:
+                if 'prefix' in e['inputBinding']:
+                    prefix = e['inputBinding']['prefix']
 
             if 'null' in e['type']:
                 opt_name = "opt_" + e['id'] 
                 opt_declaration_val = "{} ${{{}}}".format(prefix, opt_name)
-                line = "def {} = {} != \"\" ? \"{}\" : \"\"".format(
-                    opt_name, opt_name, opt_declaration_val
+
+                # If input_type is path, we check its name against NO_FILE
+                # else if it's val we simply check whether it's empty.
+                # Apparently Nextflow complains if >1 optional input use
+                # file("NO_FILE"), so we number them.
+                val_to_check = None
+                val_against = None
+                if self.check_is_file(e):
+                    self.count_opt_input_file += 1
+                    val_to_check = opt_name + ".name"
+                    val_against = "\"NO_FILE{}\"".format(self.count_opt_input_file)
+                else:
+                    val_to_check = opt_name
+                    val_against = "\"\""
+                line = "def {} = {} != {} ? \"{}\" : \"\"".format(
+                    opt_name, val_to_check, val_against, opt_declaration_val
                 )
                 declaration_lines.append(line)
 
@@ -300,12 +313,28 @@ class CWLFile:
         
         return ret_str
 
+    def check_is_file(self, inp):
+        is_file = False
+        if type(inp['type']) is str:
+            is_file = (inp['type'] == "File")
+        elif type(inp['type']) is list:
+            is_file = ("File" in inp['type'])
+        elif type(inp['type']) is dict:
+            if 'items' in inp['type']:
+                if inp['type']['items'] == "File":
+                    is_file = True
+
+        return is_file 
+
     def get_inp_type(self, inp):
         inp_type = None
         if self.cwl_class == 'Workflow':
             inp_type = ''
         else: # CommandLineTool or ExpressionTool
-            inp_type = "val"
+            if self.check_is_file(inp):
+                inp_type = "path"
+            else:
+                inp_type = "val"
 
         return inp_type
 
@@ -325,7 +354,8 @@ class CWLFile:
     def format_output_list(self, out_list: List) -> str:        
         ret_str = ""
         for e in out_list:
-            ret_str += self.get_out_type(e) + " \"{}\"\t, emit: {}\n\t".format(e['outputBinding']['glob'], e['id']) 
+            ret_str += self.get_out_type(e) + " \"{}\"\t, emit: {}\n\t".format(
+                e['outputBinding']['glob'].lstrip("$('").rstrip("')"), e['id']) 
         
         return ret_str
 
