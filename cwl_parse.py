@@ -130,7 +130,8 @@ class CWLFile:
             self.print_template_process()
 
     def print_template_process(self):
-        in_template = open("./templates/template_process.txt", "r")
+        file_dir = os.path.dirname(os.path.realpath(__file__))
+        in_template = open(file_dir + "/templates/template_process.txt", "r")
         template = Template(in_template.read())
 
         pr_input_list = [
@@ -149,9 +150,9 @@ class CWLFile:
         pr_input = self.format_input_list(pr_input_list)
         pr_output = self.format_output_list(pr_output_list)
         pr_script = """
-        '''
+        \"\"\"
         {}
-        '''
+        \"\"\"
         """.format(script)
         
         subs = {
