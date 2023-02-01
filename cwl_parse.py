@@ -134,6 +134,7 @@ class CWLFile:
         in_template = open(file_dir + "/templates/template_process.txt", "r")
         template = Template(in_template.read())
 
+        print(self.cwl_inputs)
         pr_input_list = [
             e for e in self.cwl_inputs
         ]
@@ -256,7 +257,8 @@ class CWLFile:
     def format_input_list(self, inp_list: List) -> str:
         ret_str = ""
         for e in inp_list:
-            ret_str += self.get_inp_type(e) + " {}\n\t".format(e['id']) 
+            e_name = e['id'] if 'null' not in e['type'] else ("opt_" + e['id']) 
+            ret_str += self.get_inp_type(e) + " {}\n\t".format(e_name) 
         
         return ret_str
 
