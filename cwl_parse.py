@@ -39,8 +39,10 @@ class CWLFile:
         # self.get_id()
 
     def get_cwl_object(self, cwl_path): 
-        # File Input - This is the only thing you will need to adjust or take in as an input to your function:
-        # cwl_file = Path("./gdc_dnaseq.bamfastq_align.workflow.cwl")  # or a plain string works as well
+        # File Input - This is the only thing you will need to adjust or take in
+        # as an input to your function: cwl_file =
+        # Path("./gdc_dnaseq.bamfastq_align.workflow.cwl")  # or a plain string
+        # works as well
         cwl_file = Path(cwl_path)
 
         # Import CWL Object
@@ -143,18 +145,20 @@ class CWLFile:
             e for e in self.cwl_outputs
         ]
 
-        
+        opt_declaration = self.construct_opt_declaration()
         script = self.construct_script()
-        # pr_output = self.construct_outputs()
-        # pr_script_list = ' '.join(self.cwl_basecommand) if self.cw
+        # pr_output = self.construct_outputs() pr_script_list = '
+        # '.join(self.cwl_basecommand) if self.cw
 
         pr_input = self.format_input_list(pr_input_list)
         pr_output = self.format_output_list(pr_output_list)
         pr_script = """
+        {}
+
         \"\"\"
         {}
         \"\"\"
-        """.format(script)
+        """.format(opt_declaration, script)
         
         subs = {
             "process_id": str.upper(self.cwl_name),
@@ -170,10 +174,40 @@ class CWLFile:
 
         print(result)
 
+    def construct_opt_declaration(self):
+        # We assume the value of all optional inputs at this point are "". The
+        # input YAML might give 'null' as value for optional inputs, so this
+        # function expect the null --> "" conversion was done elsewhere before. 
+        # 
+        # We handle optional inputs by checking whether their value is "". If it
+        # isn't, we declare a new variable with concatenated prefix like shown
+        # in this pattern:
+        # https://nextflow-io.github.io/patterns/optional-input/ , e.g.:  
+        # def opt_adapters = opt_adapters != "" ? "--adapters ${opt_adapters}" :
+        # ""
+        declaration_lines = []
+        for e in self.cwl_inputs:
+            assert('inputBinding' in e)
+            prefix = ""
+            if 'prefix' in e['inputBinding']:
+                prefix = e['inputBinding']['prefix']
+
+            if 'null' in e['type']:
+                opt_name = "opt_" + e['id'] 
+                opt_declaration_val = "{} ${{{}}}".format(prefix, opt_name)
+                line = "def {} = {} != \"\" ? \"{}\" : \"\"".format(
+                    opt_name, opt_name, opt_declaration_val
+                )
+                declaration_lines.append(line)
+
+        ret_declaration = "\n\t\t".join(declaration_lines)
+
+        return ret_declaration
+
     def construct_script(self):
         ret_script = ' '.join(self.cwl_basecommand)
-        # If inputs does not have position binding, 
-        # we assign the same priority using a big value.
+        # If inputs does not have position binding, we assign the same priority
+        # using a big value.
         for e in self.cwl_inputs:
             if "inputBinding" in e:
                 if "position" in e:
@@ -183,15 +217,21 @@ class CWLFile:
                     'position': 9999,
                 }
         # Here we construct arguments for basecommand with the right order
-        # sorted_inputs = sorted(self.cwl_inputs, key=lambda x: x['inputBinding']['position'])
+        # sorted_inputs = sorted(self.cwl_inputs, key=lambda x:
+        # x['inputBinding']['position'])
         sorted_inputs = self.cwl_inputs
         
         arguments = [' ']
         for e in sorted_inputs:
             assert('inputBinding' in e)
-            if 'prefix' in e['inputBinding']:
-                arguments.append(e['inputBinding']['prefix'])
-            arguments.append("${{{}}}".format(e['id']))
+            # We only include e in arguments if it is not optional, else we
+            # define a new variable and ensure "opt_<e>" resolves to ""
+            if 'null' not in e['type']: 
+                if 'prefix' in e['inputBinding']:
+                    arguments.append(e['inputBinding']['prefix'])
+                arguments.append("${{{}}}".format(e['id']))
+            else:
+                arguments.append("${{{}}}".format("opt_" + e['id']))
         
         ret_script += ' '.join(arguments)
 
@@ -199,11 +239,9 @@ class CWLFile:
 
     def construct_outputs(self):
         ret_outputs = []
-        # for e in self.cwl_outputs:
-        #     output = {
-        #         'id': e['id'],
-        #         'glob': e['outputBinding']['glob'] if 'glob' in e['outputBinding'] else None,
-        #         'type': 
+        # for e in self.cwl_outputs: output = { 'id': e['id'], 'glob':
+        #     e['outputBinding']['glob'] if 'glob' in e['outputBinding'] else
+        #         None, 'type': 
 
 
         return ret_outputs
@@ -258,7 +296,7 @@ class CWLFile:
         ret_str = ""
         for e in inp_list:
             e_name = e['id'] if 'null' not in e['type'] else ("opt_" + e['id']) 
-            ret_str += self.get_inp_type(e) + " {}\n\t".format(e_name) 
+            ret_str += self.get_inp_type(e) + " {}\n\t\t".format(e_name) 
         
         return ret_str
 
@@ -309,8 +347,10 @@ class CWLFile:
         self.print_body()
 
 def convert_to_nextflow(cwl_path):
-    # File Input - This is the only thing you will need to adjust or take in as an input to your function:
-    # cwl_file = Path("./gdc_dnaseq.bamfastq_align.workflow.cwl")  # or a plain string works as well
+    # File Input - This is the only thing you will need to adjust or take in as
+    # an input to your function: cwl_file =
+    # Path("./gdc_dnaseq.bamfastq_align.workflow.cwl")  # or a plain string
+    # works as well
     cwl_file = Path(cwl_path)
 
     # Import CWL Object
