@@ -1,0 +1,9 @@
+process $process_id {
+    $container
+    input:
+        $input
+    output:
+        $output
+    script:
+        $script
+}

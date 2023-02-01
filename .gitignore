@@ -2,3 +2,6 @@
 *.json
 *.sh
 .DS_Store
+
+# Except templates
+!templates/*
