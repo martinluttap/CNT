@@ -1,0 +1,9 @@
+docker {    
+    enabled = true
+}
+
+process {
+    withName:$process_id{
+        container = '$container_uri'
+    }
+}

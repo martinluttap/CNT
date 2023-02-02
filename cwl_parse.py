@@ -1,3 +1,5 @@
+from argparse import ArgumentParser
+from cwl_utils.parser import load_document_by_uri, save
 from pathlib import Path
 from string import Template
 from typing import List
@@ -5,16 +7,25 @@ from typing import List
 import os
 import sys
 
-# import json5
 
-from cwl_utils.parser import load_document_by_uri, save
+parser = ArgumentParser(description="Automated CWL <-> X Translator")
+parser.add_argument("cwl_source", help="Source CWL file")
+parser.add_argument(
+    "--with_config",
+    action="store_true",
+    help="Generate <cwl_source>.nextflow.config for docker usage.",
+)
+
+parser.set_defaults(with_config=False)
+args = parser.parse_args()
+
 
 class CWLFile:
     def __init__(self, cwl_path) -> None:
         self.cwl_path = cwl_path
         self.cwl_object = None
         self.cwl_class = None
-        self.cwl_inputs = None # List
+        self.cwl_inputs = None  # List
         self.cwl_outputs = None
         self.cwl_steps = None
         self.cwl_id = None
@@ -39,7 +50,7 @@ class CWLFile:
         self.get_basecommand()
         # self.get_id()
 
-    def get_cwl_object(self, cwl_path): 
+    def get_cwl_object(self, cwl_path):
         # File Input - This is the only thing you will need to adjust or take in
         # as an input to your function: cwl_file =
         # Path("./gdc_dnaseq.bamfastq_align.workflow.cwl")  # or a plain string
@@ -55,44 +66,44 @@ class CWLFile:
         self.cwl_object = saved_obj
 
     def get_id(self):
-        self.cwl_id = self.cwl_object['id']
+        self.cwl_id = self.cwl_object["id"]
 
     def get_container_uri(self):
         container_uri = None
         if "requirements" in self.cwl_object:
-            for req in self.cwl_object['requirements']:
-                if req['class'] == "DockerRequirement":
-                    container_uri = req['dockerPull']
-        
+            for req in self.cwl_object["requirements"]:
+                if req["class"] == "DockerRequirement":
+                    container_uri = req["dockerPull"]
+
         self.container_uri = container_uri
 
     def get_name(self):
-        self.cwl_name = self.cwl_object['id'].split('#')[-1]
+        self.cwl_name = self.cwl_object["id"].split("#")[-1]
 
     def get_class(self):
-        self.cwl_class = self.cwl_object['class']
+        self.cwl_class = self.cwl_object["class"]
 
     def get_inputs(self):
-        self.cwl_inputs = self.cwl_object['inputs']
+        self.cwl_inputs = self.cwl_object["inputs"]
 
     def get_outputs(self):
-        self.cwl_outputs = self.cwl_object['outputs']
+        self.cwl_outputs = self.cwl_object["outputs"]
 
     def get_steps(self):
-        if 'steps' in self.cwl_object:
-            self.cwl_steps = self.cwl_object['steps']
+        if "steps" in self.cwl_object:
+            self.cwl_steps = self.cwl_object["steps"]
         else:
-            assert(self.cwl_object['class'] != "Workflow")
+            assert self.cwl_object["class"] != "Workflow"
 
     def get_dependencies(self):
         if self.cwl_steps:
-            self.cwl_dependencies = [e['run'] for e in self.cwl_steps]
+            self.cwl_dependencies = [e["run"] for e in self.cwl_steps]
 
     def get_dependency_aliases(self):
         if self.cwl_steps:
             dep_aliases = {}
             for e in self.cwl_steps:
-                dep_aliases[e['run']] = e['id']
+                dep_aliases[e["run"]] = e["id"]
 
             self.cwl_dependency_aliases = dep_aliases
 
@@ -104,16 +115,16 @@ class CWLFile:
         print(self.cwl_object)
 
     def print_class(self):
-        print(self.cwl_object['class'])
+        print(self.cwl_object["class"])
 
     def print_inputs(self):
-        print(self.cwl_object['inputs'])
+        print(self.cwl_object["inputs"])
 
         for e in self.cwl_inputs:
             print(e)
 
     def print_id(self):
-        print(self.cwl_object['id'])
+        print(self.cwl_object["id"])
 
     def print_outputs(self):
         outputs = self.construct_outputs()
@@ -132,18 +143,29 @@ class CWLFile:
         else:
             self.print_template_process()
 
+    def print_template_config(self):
+        file_dir = os.path.dirname(os.path.realpath(__file__))
+        in_template = open(file_dir + "/templates/template_config.txt", "r")
+        template = Template(in_template.read())
+
+        subs = {
+            "process_id": str.upper(self.cwl_name),
+            "container_uri": self.container_uri,
+        }
+
+        results = template.substitute(subs)
+
+        outfile = open("{}.nextflow.config".format(str.upper(self.cwl_name)), 'w')
+        outfile.write(results)
+
     def print_template_process(self):
         file_dir = os.path.dirname(os.path.realpath(__file__))
         in_template = open(file_dir + "/templates/template_process.txt", "r")
         template = Template(in_template.read())
 
-        pr_input_list = [
-            e for e in self.cwl_inputs
-        ]
+        pr_input_list = [e for e in self.cwl_inputs]
 
-        pr_output_list = [
-            e for e in self.cwl_outputs
-        ]
+        pr_output_list = [e for e in self.cwl_outputs]
 
         opt_declaration = self.construct_opt_declaration()
         script = self.construct_script()
@@ -156,59 +178,60 @@ class CWLFile:
         \"\"\"
         {}
         \"\"\"
-        """.format(opt_declaration, script)
-        
+        """.format(
+            opt_declaration, script
+        )
+
         subs = {
             "process_id": str.upper(self.cwl_name),
             "container": "",  # By default we let container empty
             "input": pr_input,
             "output": pr_output,
-            "script": pr_script
+            "script": pr_script,
         }
         if self.container_uri:
-            subs['container'] = "container \"{}\"\n".format(self.container_uri)
-        
-        result = template.substitute(subs) 
+            subs["container"] = 'container "{}"\n'.format(self.container_uri)
+
+        result = template.substitute(subs)
 
         print(result)
 
     def construct_opt_declaration(self):
         # We assume the value of all optional inputs at this point are "". The
         # input YAML might give 'null' as value for optional inputs, so this
-        # function expect the null --> "" conversion was done elsewhere before. 
-        # 
+        # function expect the null --> "" conversion was done elsewhere before.
+        #
         # We handle optional inputs by checking whether their value is "". If it
         # isn't, we declare a new variable with concatenated prefix like shown
         # in this pattern:
-        # https://nextflow-io.github.io/patterns/optional-input/ , e.g.:  
-        # def opt_adapters = opt_adapters != "" ? "--adapters ${opt_adapters}" :
-        # ""
+        # https://nextflow-io.github.io/patterns/optional-input/ , e.g.: def
+        # opt_adapters = opt_adapters != "" ? "--adapters ${opt_adapters}" : ""
         declaration_lines = []
         for e in self.cwl_inputs:
             # assert('inputBinding' in e)
             prefix = ""
-            if 'inputBinding' in e:
-                if 'prefix' in e['inputBinding']:
-                    prefix = e['inputBinding']['prefix']
+            if "inputBinding" in e:
+                if "prefix" in e["inputBinding"]:
+                    prefix = e["inputBinding"]["prefix"]
 
-            if 'null' in e['type']:
-                opt_name = "opt_" + e['id'] 
+            if "null" in e["type"]:
+                opt_name = "opt_" + e["id"]
                 opt_declaration_val = "{} ${{{}}}".format(prefix, opt_name)
 
-                # If input_type is path, we check its name against NO_FILE
-                # else if it's val we simply check whether it's empty.
-                # Apparently Nextflow complains if >1 optional input use
-                # file("NO_FILE"), so we number them.
+                # If input_type is path, we check its name against NO_FILE else
+                # if it's val we simply check whether it's empty. Apparently
+                # Nextflow complains if >1 optional input use file("NO_FILE"),
+                # so we number them.
                 val_to_check = None
                 val_against = None
                 if self.check_is_file(e):
                     self.count_opt_input_file += 1
                     val_to_check = opt_name + ".name"
-                    val_against = "\"NO_FILE{}\"".format(self.count_opt_input_file)
+                    val_against = '"NO_FILE{}"'.format(self.count_opt_input_file)
                 else:
                     val_to_check = opt_name
-                    val_against = "\"\""
-                line = "def {} = {} != {} ? \"{}\" : \"\"".format(
+                    val_against = '""'
+                line = 'def {} = {} != {} ? "{}" : ""'.format(
                     opt_name, val_to_check, val_against, opt_declaration_val
                 )
                 declaration_lines.append(line)
@@ -218,7 +241,7 @@ class CWLFile:
         return ret_declaration
 
     def construct_script(self):
-        ret_script = ' '.join(self.cwl_basecommand)
+        ret_script = " ".join(self.cwl_basecommand)
         # If inputs does not have position binding, we assign the same priority
         # using a big value.
         for e in self.cwl_inputs:
@@ -226,27 +249,27 @@ class CWLFile:
                 if "position" in e:
                     pass
             else:
-                e['inputBinding'] = {
-                    'position': 9999,
+                e["inputBinding"] = {
+                    "position": 9999,
                 }
         # Here we construct arguments for basecommand with the right order
         # sorted_inputs = sorted(self.cwl_inputs, key=lambda x:
         # x['inputBinding']['position'])
         sorted_inputs = self.cwl_inputs
-        
-        arguments = [' ']
+
+        arguments = [" "]
         for e in sorted_inputs:
-            assert('inputBinding' in e)
+            assert "inputBinding" in e
             # We only include e in arguments if it is not optional, else we
             # define a new variable and ensure "opt_<e>" resolves to ""
-            if 'null' not in e['type']: 
-                if 'prefix' in e['inputBinding']:
-                    arguments.append(e['inputBinding']['prefix'])
-                arguments.append("${{{}}}".format(e['id']))
+            if "null" not in e["type"]:
+                if "prefix" in e["inputBinding"]:
+                    arguments.append(e["inputBinding"]["prefix"])
+                arguments.append("${{{}}}".format(e["id"]))
             else:
-                arguments.append("${{{}}}".format("opt_" + e['id']))
-        
-        ret_script += ' '.join(arguments)
+                arguments.append("${{{}}}".format("opt_" + e["id"]))
+
+        ret_script += " ".join(arguments)
 
         return ret_script
 
@@ -254,29 +277,24 @@ class CWLFile:
         ret_outputs = []
         # for e in self.cwl_outputs: output = { 'id': e['id'], 'glob':
         #     e['outputBinding']['glob'] if 'glob' in e['outputBinding'] else
-        #         None, 'type': 
-
+        #         None, 'type':
 
         return ret_outputs
 
     def print_template_workflow(self):
 
-        in_template = open("{}/templates/template_workflow.txt".format(os.getcwd()), "r")
+        in_template = open(
+            "{}/templates/template_workflow.txt".format(os.getcwd()), "r"
+        )
         template = Template(in_template.read())
-        
-        wf_take_list = [
-            e['id'] for e in self.cwl_inputs
-        ]
+
+        wf_take_list = [e["id"] for e in self.cwl_inputs]
         wf_take_bindings = []
 
-        wf_main_list = [
-            "{}()".format(e['id'].upper()) for e in self.cwl_steps
-        ]
+        wf_main_list = ["{}()".format(e["id"].upper()) for e in self.cwl_steps]
         wf_main_bindings = []
 
-        wf_emit_list = [
-            e['id'] for e in self.cwl_outputs
-        ]
+        wf_emit_list = [e["id"] for e in self.cwl_outputs]
         wf_emit_bindings = []
 
         wf_take = self.format_list(wf_take_list, wf_take_bindings)
@@ -287,50 +305,50 @@ class CWLFile:
             "workflow_id": str.upper(self.cwl_name),
             "take": wf_take,
             "main": wf_main,
-            "emit": wf_emit
+            "emit": wf_emit,
         }
 
-        result = template.substitute(subs) 
+        result = template.substitute(subs)
 
         print(result)
 
     def print_template_header(self):
         for e in self.cwl_dependencies:
-            lib_name = e.strip().split('/')[-1].strip('.cwl')
+            lib_name = e.strip().split("/")[-1].strip(".cwl")
             lib_alias = self.cwl_dependency_aliases[e]
             lib_source = e.replace(".cwl", ".nf")
-            print("INCLUDE {{ {} as {} }} from {}".format(
-                lib_name.upper(),
-                lib_alias.upper(),
-                lib_source
-            ))
+            print(
+                "INCLUDE {{ {} as {} }} from {}".format(
+                    lib_name.upper(), lib_alias.upper(), lib_source
+                )
+            )
 
     def format_input_list(self, inp_list: List) -> str:
         ret_str = ""
         for e in inp_list:
-            e_name = e['id'] if 'null' not in e['type'] else ("opt_" + e['id']) 
-            ret_str += self.get_inp_type(e) + " {}\n\t\t".format(e_name) 
-        
+            e_name = e["id"] if "null" not in e["type"] else ("opt_" + e["id"])
+            ret_str += self.get_inp_type(e) + " {}\n\t\t".format(e_name)
+
         return ret_str
 
     def check_is_file(self, inp):
         is_file = False
-        if type(inp['type']) is str:
-            is_file = (inp['type'] == "File")
-        elif type(inp['type']) is list:
-            is_file = ("File" in inp['type'])
-        elif type(inp['type']) is dict:
-            if 'items' in inp['type']:
-                if inp['type']['items'] == "File":
+        if type(inp["type"]) is str:
+            is_file = inp["type"] == "File"
+        elif type(inp["type"]) is list:
+            is_file = "File" in inp["type"]
+        elif type(inp["type"]) is dict:
+            if "items" in inp["type"]:
+                if inp["type"]["items"] == "File":
                     is_file = True
 
-        return is_file 
+        return is_file
 
     def get_inp_type(self, inp):
         inp_type = None
-        if self.cwl_class == 'Workflow':
-            inp_type = ''
-        else: # CommandLineTool or ExpressionTool
+        if self.cwl_class == "Workflow":
+            inp_type = ""
+        else:  # CommandLineTool or ExpressionTool
             if self.check_is_file(inp):
                 inp_type = "path"
             else:
@@ -338,32 +356,33 @@ class CWLFile:
 
         return inp_type
 
-
     def get_out_type(self, out):
         out_type = None
-        if self.cwl_class == 'Workflow':
-            out_type = ''
-        else: # CommandLineTool or ExpressionTool
-            if out['type'] == "File" or "*" in out['outputBinding']['glob']:
+        if self.cwl_class == "Workflow":
+            out_type = ""
+        else:  # CommandLineTool or ExpressionTool
+            if out["type"] == "File" or "*" in out["outputBinding"]["glob"]:
                 out_type = "path"
             else:
                 out_type = "val"
 
         return out_type
 
-    def format_output_list(self, out_list: List) -> str:        
+    def format_output_list(self, out_list: List) -> str:
         ret_str = ""
         for e in out_list:
-            ret_str += self.get_out_type(e) + " \"{}\"\t, emit: {}\n\t".format(
-                e['outputBinding']['glob'].lstrip("$('").rstrip("')"), e['id']) 
-        
+            ret_str += self.get_out_type(e) + ' "{}"\t, emit: {}\n\t'.format(
+                e["outputBinding"]["glob"].lstrip("$('").rstrip("')"), e["id"]
+            )
+
         return ret_str
 
-
     def format_list(self, inp_list: List, bindings: List) -> str:
-        inp_type = '' if self.cwl_class == 'Workflow' else 'val '
-        
-        ret_str = inp_type + inp_list[0] + "({})".format(bindings[0]) if len(bindings) else ""
+        inp_type = "" if self.cwl_class == "Workflow" else "val "
+
+        ret_str = (
+            inp_type + inp_list[0] + "({})".format(bindings[0]) if len(bindings) else ""
+        )
 
         if len(inp_list) > 1:
             assert len(inp_list) == len(bindings)
@@ -375,6 +394,7 @@ class CWLFile:
     def print_script(self):
         # self.print_header()
         self.print_body()
+
 
 def convert_to_nextflow(cwl_path):
     # File Input - This is the only thing you will need to adjust or take in as
@@ -391,6 +411,7 @@ def convert_to_nextflow(cwl_path):
 
     print(str_obj)
 
+
 if __name__ == "__main__":
     # print(sys.argv[1])
     cwl_path = sys.argv[1]
@@ -403,3 +424,9 @@ if __name__ == "__main__":
         cwl_file.print_body()
     else:
         cwl_file.print_body()
+
+    # Here we add an option to: 1.) Print out corresponding .nextflow.config for
+    # docker usage
+    if args.with_config:
+        cwl_file.print_template_config()
+    # 2.) Concatenate workflow() for testing purpose
