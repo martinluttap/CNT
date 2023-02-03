@@ -11,11 +11,16 @@ import sys
 parser = ArgumentParser(description="Automated CWL <-> X Translator")
 parser.add_argument("cwl_source", help="Source CWL file")
 parser.add_argument(
+    "--unit_test",
+    action="store_true",
+    help="Append a Workflow(...) call for stand-alone execution.",
+)
+parser.add_argument(
     "--with_config",
     action="store_true",
     help="Generate <cwl_source>.nextflow.config for docker usage.",
 )
-
+parser.set_defaults(unit_test=False)
 parser.set_defaults(with_config=False)
 args = parser.parse_args()
 
@@ -34,7 +39,6 @@ class CWLFile:
         self.cwl_dependencies = None
         self.cwl_dependency_aliases = None
         self.cwl_basecommand = None
-        self.count_opt_input_file = 0
 
         # Initialization methods
         self.get_cwl_object(cwl_path)
@@ -167,7 +171,7 @@ class CWLFile:
 
         pr_output_list = [e for e in self.cwl_outputs]
 
-        opt_declaration = self.construct_opt_declaration()
+        opt_declaration = self.construct_process_opt_declaration()
         script = self.construct_script()
 
         pr_input = self.format_input_list(pr_input_list)
@@ -196,7 +200,7 @@ class CWLFile:
 
         print(result)
 
-    def construct_opt_declaration(self):
+    def construct_process_opt_declaration(self):
         # We assume the value of all optional inputs at this point are "". The
         # input YAML might give 'null' as value for optional inputs, so this
         # function expect the null --> "" conversion was done elsewhere before.
@@ -207,6 +211,7 @@ class CWLFile:
         # https://nextflow-io.github.io/patterns/optional-input/ , e.g.: def
         # opt_adapters = opt_adapters != "" ? "--adapters ${opt_adapters}" : ""
         declaration_lines = []
+        count_opt_input_file = 0 # Assume ordering of keys does not change
         for e in self.cwl_inputs:
             # assert('inputBinding' in e)
             prefix = ""
@@ -214,7 +219,7 @@ class CWLFile:
                 if "prefix" in e["inputBinding"]:
                     prefix = e["inputBinding"]["prefix"]
 
-            if "null" in e["type"]:
+            if self.check_is_optional(e):
                 opt_name = "opt_" + e["id"]
                 opt_declaration_val = "{} ${{{}}}".format(prefix, opt_name)
 
@@ -225,9 +230,9 @@ class CWLFile:
                 val_to_check = None
                 val_against = None
                 if self.check_is_file(e):
-                    self.count_opt_input_file += 1
+                    count_opt_input_file += 1
                     val_to_check = opt_name + ".name"
-                    val_against = '"NO_FILE{}"'.format(self.count_opt_input_file)
+                    val_against = '"NO_FILE{}"'.format(count_opt_input_file)
                 else:
                     val_to_check = opt_name
                     val_against = '""'
@@ -239,6 +244,57 @@ class CWLFile:
         ret_declaration = "\n\t\t".join(declaration_lines)
 
         return ret_declaration
+
+    def construct_workflow_opt_declaration(self):
+        # For each optional input, we check whether it is a file or value. If it
+        # is a file, we assign it with "file('NO_FILE<#>')", where <#> E {0,N; n
+        # = number of optional input files}. This is due to Nextflow not
+        # allowing us to use "file('NO_FILE')" for more than one variable. If 
+        # it is a val, we simply assign ""
+
+        declaration_lines = []
+        count_opt_input_file = 0
+        for e in self.cwl_inputs:
+            if self.check_is_optional(e):
+                opt_name = "opt_" + e["id"]
+                # If input_type is path, we check its name against NO_FILE else
+                # if it's val we simply check whether it's empty. Apparently
+                # Nextflow complains if >1 optional input use file("NO_FILE"),
+                # so we number them.
+                param_name = None
+                default_val = None
+                param_name = "params." + e["id"]
+                if self.check_is_file(e):
+                    count_opt_input_file += 1
+                    default_val = 'file("NO_FILE{}")'.format(count_opt_input_file)
+                else:
+                    default_val = '""'
+                line = '{} = {} ? {} : {}'.format(
+                    opt_name, param_name, param_name, default_val
+                )
+                declaration_lines.append(line)
+
+        ret_declaration = "\n\t".join(declaration_lines)
+
+        return ret_declaration
+
+    def construct_workflow_process_args(self):
+        # If input is optional, we pass opt_<input_name> as argument,
+        # which is defined by construct_workflow_opt_declaration.
+        # Else we pass params.<input_name>. 
+
+        arg_lines = []
+        for e in self.cwl_inputs:
+            arg = None
+            if self.check_is_optional(e):
+                arg = "opt_" + e['id']
+            else: 
+                arg = "params." + e['id']
+            arg_lines.append(arg)
+
+        ret_args = ',\n\t\t'.join(arg_lines) 
+        return ret_args
+
 
     def construct_script(self):
         ret_script = " ".join(self.cwl_basecommand)
@@ -312,6 +368,26 @@ class CWLFile:
 
         print(result)
 
+    def print_template_standalone_text(self):
+        in_template = open(
+            "{}/templates/template_standalone_test.txt".format(os.getcwd()), "r"
+        )
+        template = Template(in_template.read())
+
+        opt_declarations_str = self.construct_workflow_opt_declaration()
+        process_name_str = str.upper(self.cwl_name)
+        process_args = self.construct_workflow_process_args()
+
+        subs = {
+            "opt_declarations": opt_declarations_str,
+            "process_name": process_name_str,
+            "process_args": process_args
+        }
+
+        result = template.substitute(subs)
+
+        print(result)
+
     def print_template_header(self):
         for e in self.cwl_dependencies:
             lib_name = e.strip().split("/")[-1].strip(".cwl")
@@ -330,6 +406,13 @@ class CWLFile:
             ret_str += self.get_inp_type(e) + " {}\n\t\t".format(e_name)
 
         return ret_str
+
+    def check_is_optional(self, inp):
+        is_optional = False
+        if "null" in inp['type']:
+            is_optional = True
+
+        return is_optional
 
     def check_is_file(self, inp):
         is_file = False
@@ -430,3 +513,5 @@ if __name__ == "__main__":
     if args.with_config:
         cwl_file.print_template_config()
     # 2.) Concatenate workflow() for testing purpose
+    if args.unit_test:
+        cwl_file.print_template_standalone_text()

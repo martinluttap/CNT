@@ -1,0 +1,7 @@
+workflow {
+    $opt_declarations
+
+    $process_name(
+        $process_args
+    )
+}
