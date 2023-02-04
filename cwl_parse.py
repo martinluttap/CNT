@@ -5,6 +5,7 @@ from string import Template
 from typing import List
 
 import os
+import re
 import sys
 
 
@@ -39,6 +40,7 @@ class CWLFile:
         self.cwl_dependencies = None
         self.cwl_dependency_aliases = None
         self.cwl_basecommand = None
+        self.cwl_arguments = None
 
         # Initialization methods
         self.get_cwl_object(cwl_path)
@@ -52,6 +54,7 @@ class CWLFile:
         self.get_dependencies()
         self.get_dependency_aliases()
         self.get_basecommand()
+        self.get_arguments()
         # self.get_id()
 
     def get_cwl_object(self, cwl_path):
@@ -114,6 +117,10 @@ class CWLFile:
     def get_basecommand(self):
         if "baseCommand" in self.cwl_object:
             self.cwl_basecommand = self.cwl_object["baseCommand"]
+
+    def get_arguments(self):
+        if "arguments" in self.cwl_object:
+            self.cwl_arguments = self.cwl_object["arguments"]
 
     def print_cwl_object(self):
         print(self.cwl_object)
@@ -249,8 +256,8 @@ class CWLFile:
         # For each optional input, we check whether it is a file or value. If it
         # is a file, we assign it with "file('NO_FILE<#>')", where <#> E {0,N; n
         # = number of optional input files}. This is due to Nextflow not
-        # allowing us to use "file('NO_FILE')" for more than one variable. If 
-        # it is a val, we simply assign ""
+        # allowing us to use "file('NO_FILE')" for more than one variable. If it
+        # is a val, we simply assign ""
 
         declaration_lines = []
         count_opt_input_file = 0
@@ -279,9 +286,9 @@ class CWLFile:
         return ret_declaration
 
     def construct_workflow_process_args(self):
-        # If input is optional, we pass opt_<input_name> as argument,
-        # which is defined by construct_workflow_opt_declaration.
-        # Else we pass params.<input_name>. 
+        # If input is optional, we pass opt_<input_name> as argument, which is
+        # defined by construct_workflow_opt_declaration. Else we pass
+        # params.<input_name>. 
 
         arg_lines = []
         for e in self.cwl_inputs:
@@ -304,26 +311,64 @@ class CWLFile:
             if "inputBinding" in e:
                 if "position" in e:
                     pass
+                else:
+                    e['inputBinding']['position'] = 9999
             else:
                 e["inputBinding"] = {
                     "position": 9999,
                 }
-        # Here we construct arguments for basecommand with the right order
-        # sorted_inputs = sorted(self.cwl_inputs, key=lambda x:
-        # x['inputBinding']['position'])
-        sorted_inputs = self.cwl_inputs
+        # Here we construct a new data structure which contained both elements
+        # from arguments and also inputs. As argument elements do not have
+        # inputBinding, our existing code might break, so we wrangle their type
+        # a little bit append inputBinding to each element. Another thing to
+        # note is we add a flag "is_argument: true" at the same level as
+        # inputBinding. This will allow us to do different processing between
+        # elements from arguments and inputs.
+        #
+        # We should still be able to differentiate elements form arguments and
+        # inputs. For now we assume that arguments will never have 'id' as one
+        # of their keys.
+        new_arguments = []
+        if self.cwl_arguments:
+            new_arguments = [{"inputBinding":e} for e in self.cwl_arguments]
+            for e in new_arguments:
+                e['is_argument'] = True
+
+        # print(self.cwl_inputs + new_arguments)
+        sorted_inputs = sorted(self.cwl_inputs + new_arguments, 
+                            key=lambda x: x['inputBinding']['position'])
+        # sorted_inputs = self.cwl_inputs
+        # print(self.cwl_arguments)
+        # print(new_arguments)
+
 
         arguments = [" "]
+        # print("================")
+        # print(sorted_inputs)
+        # print("================")
         for e in sorted_inputs:
-            assert "inputBinding" in e
-            # We only include e in arguments if it is not optional, else we
-            # define a new variable and ensure "opt_<e>" resolves to ""
-            if "null" not in e["type"]:
+            if 'is_argument' not in e:
+                assert "inputBinding" in e
+                # We only include e in arguments if it is not optional, else we
+                # define a new variable and ensure "opt_<e>" resolves to ""
+                if "null" not in e["type"]:
+                    if "prefix" in e["inputBinding"]:
+                        arguments.append(e["inputBinding"]["prefix"])
+                    arguments.append("${{{}}}".format(e["id"]))
+                else:
+                    arguments.append("${{{}}}".format("opt_" + e["id"]))
+            else:
                 if "prefix" in e["inputBinding"]:
                     arguments.append(e["inputBinding"]["prefix"])
-                arguments.append("${{{}}}".format(e["id"]))
-            else:
-                arguments.append("${{{}}}".format("opt_" + e["id"]))
+                # Now most of the time the argument value here is in the form of
+                # javascript. We need to find a way to handle this, but for now
+                # let's just the whole thing as a string. This way it's easy to
+                # fine-tune the translation output. 
+                val_from = re.sub("\"", '', 
+                            e['inputBinding']['valueFrom'].lstrip("$(").rstrip(")"))
+                arguments.append(val_from)
+
+                
 
         ret_script += " ".join(arguments)
 
@@ -508,8 +553,9 @@ if __name__ == "__main__":
     else:
         cwl_file.print_body()
 
-    # Here we add an option to: 1.) Print out corresponding .nextflow.config for
+    # Here we add options to: 1.) Print out corresponding nextflow.config for
     # docker usage
+    # print(cwl_file.cwl_arguments)
     if args.with_config:
         cwl_file.print_template_config()
     # 2.) Concatenate workflow() for testing purpose
