@@ -305,18 +305,22 @@ class CWLFile:
 
     def construct_script(self):
         ret_script = " ".join(self.cwl_basecommand)
-        # If inputs does not have position binding, we assign the same priority
-        # using a big value.
+
+        # First we take only inputs which has binding
+        inputs_with_binding = []
         for e in self.cwl_inputs:
+            if 'inputBinding' in e:
+                inputs_with_binding.append(e)
+
+        # If inputs does not have position, we assign the same priority
+        # using a big value.
+        for e in inputs_with_binding:
             if "inputBinding" in e:
                 if "position" in e:
                     pass
                 else:
                     e['inputBinding']['position'] = 9999
-            else:
-                e["inputBinding"] = {
-                    "position": 9999,
-                }
+
         # Here we construct a new data structure which contained both elements
         # from arguments and also inputs. As argument elements do not have
         # inputBinding, our existing code might break, so we wrangle their type
@@ -333,30 +337,26 @@ class CWLFile:
             new_arguments = [{"inputBinding":e} for e in self.cwl_arguments]
             for e in new_arguments:
                 e['is_argument'] = True
-
-        # print(self.cwl_inputs + new_arguments)
-        sorted_inputs = sorted(self.cwl_inputs + new_arguments, 
+        sorted_inputs = sorted(inputs_with_binding + new_arguments, 
                             key=lambda x: x['inputBinding']['position'])
-        # sorted_inputs = self.cwl_inputs
-        # print(self.cwl_arguments)
-        # print(new_arguments)
-
 
         arguments = [" "]
-        # print("================")
-        # print(sorted_inputs)
-        # print("================")
         for e in sorted_inputs:
             if 'is_argument' not in e:
-                assert "inputBinding" in e
-                # We only include e in arguments if it is not optional, else we
-                # define a new variable and ensure "opt_<e>" resolves to ""
-                if "null" not in e["type"]:
-                    if "prefix" in e["inputBinding"]:
-                        arguments.append(e["inputBinding"]["prefix"])
-                    arguments.append("${{{}}}".format(e["id"]))
+                if "inputBinding" in e:
+                    # We only include e in arguments if it is not optional, else
+                    # we define a new variable and ensure "opt_<e>" resolves to
+                    # ""
+                    if "null" not in e["type"]:
+                        if "prefix" in e["inputBinding"]:
+                            arguments.append(e["inputBinding"]["prefix"])
+                        arguments.append("${{{}}}".format(e["id"]))
+                    else:
+                        arguments.append("${{{}}}".format("opt_" + e["id"]))
                 else:
-                    arguments.append("${{{}}}".format("opt_" + e["id"]))
+                    # Input without inputBinding is usually processed with
+                    # JavaScript.
+                    pass
             else:
                 if "prefix" in e["inputBinding"]:
                     arguments.append(e["inputBinding"]["prefix"])
@@ -554,8 +554,7 @@ if __name__ == "__main__":
         cwl_file.print_body()
 
     # Here we add options to: 1.) Print out corresponding nextflow.config for
-    # docker usage
-    # print(cwl_file.cwl_arguments)
+    # docker usage print(cwl_file.cwl_arguments)
     if args.with_config:
         cwl_file.print_template_config()
     # 2.) Concatenate workflow() for testing purpose
