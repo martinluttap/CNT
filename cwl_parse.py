@@ -344,40 +344,58 @@ class CWLFile:
                 else:
                     e['inputBinding']['position'] = 9999
 
-        print(cmd_arguments)
         sorted_inputs = sorted(cmd_arguments, 
                             key=lambda x: x['inputBinding']['position'])
 
         arguments = [" "]
         for e in sorted_inputs:
+            prefix_and_val = ""
+            prefix = ""
+            arg_val = ""
+            separator = ""
+            val_from = ""
             if 'is_argument' not in e:
                 if "inputBinding" in e:
+                    # Here we get the appropriate value for prefix, separator, 
+                    # and argument value.
+
+                    # First we check the separator
+                    if 'separate' in e['inputBinding']:
+                        is_separator = e['inputBinding']['separate']
+                        separator = " " if is_separator else ""
+
                     # We only include e in arguments if it is not optional, else
                     # we define a new variable and ensure "opt_<e>" resolves to
                     # ""
                     if "null" not in e["type"]:
                         if "prefix" in e["inputBinding"]:
-                            arguments.append(e["inputBinding"]["prefix"])
-                        arguments.append("${{{}}}".format(e["id"]))
+                            prefix = e["inputBinding"]["prefix"] 
+                            # arguments.append(e["inputBinding"]["prefix"])
+                        # arguments.append("${{{}}}".format(e["id"]))
+                        arg_val = "${{{}}}".format(e["id"])
+                        # prefix_and_val += "${{{}}}".format(e["id"])
                     else:
-                        arguments.append("${{{}}}".format("opt_" + e["id"]))
+                        # arguments.append("${{{}}}".format("opt_" + e["id"]))
+                        arg_val = "${{{}}}".format("opt_" + e["id"])
+                    
+                    # Now we construct
+                    prefix_and_val = "{}{}{}".format(prefix, separator, arg_val)
                 else:
                     # Input without inputBinding is usually processed with
                     # JavaScript.
                     pass
             else:
                 if "prefix" in e["inputBinding"]:
-                    arguments.append(e["inputBinding"]["prefix"])
+                    prefix = e["inputBinding"]["prefix"] 
                 # Now most of the time the argument value here is in the form of
                 # javascript. We need to find a way to handle this, but for now
                 # let's just the whole thing as a string. This way it's easy to
                 # fine-tune the translation output. 
                 val_from = re.sub("\"", '', 
                             e['inputBinding']['valueFrom'].lstrip("$(").rstrip(")"))
-                arguments.append(val_from)
-
+                prefix_and_val = prefix + val_from
+            arguments.append(prefix_and_val)
                 
-
         ret_script += " ".join(arguments)
 
         return ret_script
