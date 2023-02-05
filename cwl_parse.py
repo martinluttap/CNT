@@ -317,15 +317,6 @@ class CWLFile:
             if 'inputBinding' in e:
                 inputs_with_binding.append(e)
 
-        # If inputs does not have position, we assign the same priority using a
-        # big value.
-        for e in inputs_with_binding:
-            if "inputBinding" in e:
-                if "position" in e:
-                    pass
-                else:
-                    e['inputBinding']['position'] = 9999
-
         # Here we construct a new data structure which contained both elements
         # from arguments and also inputs. As argument elements do not have
         # inputBinding, our existing code might break, so we wrangle their type
@@ -342,7 +333,19 @@ class CWLFile:
             new_arguments = [{"inputBinding":e} for e in self.cwl_arguments]
             for e in new_arguments:
                 e['is_argument'] = True
-        sorted_inputs = sorted(inputs_with_binding + new_arguments, 
+
+        # If either input or new_arguments does not have position, we assign the
+        # same priority using a big value.
+        cmd_arguments = inputs_with_binding + new_arguments
+        for e in cmd_arguments:
+            if "inputBinding" in e:
+                if "position" in e:
+                    pass
+                else:
+                    e['inputBinding']['position'] = 9999
+
+        print(cmd_arguments)
+        sorted_inputs = sorted(cmd_arguments, 
                             key=lambda x: x['inputBinding']['position'])
 
         arguments = [" "]
