@@ -276,8 +276,11 @@ class CWLFile:
                     default_val = 'file("NO_FILE{}")'.format(count_opt_input_file)
                 else:
                     default_val = '""'
-                line = '{} = {} ? {} : {}'.format(
-                    opt_name, param_name, param_name, default_val
+                line = '{} = {} ? {}{} : {}'.format(
+                    opt_name, param_name, param_name,  (
+                        ".path" if self.check_is_file(e) else ""
+                    ), 
+                    default_val
                 )
                 declaration_lines.append(line)
 
@@ -296,7 +299,9 @@ class CWLFile:
             if self.check_is_optional(e):
                 arg = "opt_" + e['id']
             else: 
-                arg = "params." + e['id']
+                arg = "params." + e['id']  + (
+                        ".path" if self.check_is_file(e) else ""
+                    )
             arg_lines.append(arg)
 
         ret_args = ',\n\t\t'.join(arg_lines) 
@@ -312,8 +317,8 @@ class CWLFile:
             if 'inputBinding' in e:
                 inputs_with_binding.append(e)
 
-        # If inputs does not have position, we assign the same priority
-        # using a big value.
+        # If inputs does not have position, we assign the same priority using a
+        # big value.
         for e in inputs_with_binding:
             if "inputBinding" in e:
                 if "position" in e:
