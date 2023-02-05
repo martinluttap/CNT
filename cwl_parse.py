@@ -222,13 +222,16 @@ class CWLFile:
         for e in self.cwl_inputs:
             # assert('inputBinding' in e)
             prefix = ""
+            separator = ""
             if "inputBinding" in e:
                 if "prefix" in e["inputBinding"]:
                     prefix = e["inputBinding"]["prefix"]
-
+                if "separator" in e["inputBinding"]:
+                    is_separator = e['inputBinding']['separator']
+                    separator = " " if is_separator else ""
             if self.check_is_optional(e):
                 opt_name = "opt_" + e["id"]
-                opt_declaration_val = "{} ${{{}}}".format(prefix, opt_name)
+                opt_declaration_val = "{}{}${{{}}}".format(prefix, separator, opt_name)
 
                 # If input_type is path, we check its name against NO_FILE else
                 # if it's val we simply check whether it's empty. Apparently
@@ -334,15 +337,22 @@ class CWLFile:
             for e in new_arguments:
                 e['is_argument'] = True
 
-        # If either input or new_arguments does not have position, we assign the
-        # same priority using a big value.
+        # If either input or new_arguments does not have position, we assign 
+        # priority based on the following rules:
+        # 1.) Arguments have higher priority than inputs
+        # 2.) Among arguments and inputs themselves, we assign the same arbitrary big value
         cmd_arguments = inputs_with_binding + new_arguments
         for e in cmd_arguments:
             if "inputBinding" in e:
                 if "position" in e:
                     pass
                 else:
-                    e['inputBinding']['position'] = 9999
+                    # Here we ensure that arguments have higher priority than inputs
+                    if 'is_argument' in e:
+                        assert(e['is_argument'] == True)
+                        e['inputBinding']['position'] = 9998
+                    else:
+                        e['inputBinding']['position'] = 9999
 
         sorted_inputs = sorted(cmd_arguments, 
                             key=lambda x: x['inputBinding']['position'])
