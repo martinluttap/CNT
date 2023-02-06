@@ -231,7 +231,7 @@ class CWLFile:
         for e in self.cwl_inputs:
             # assert('inputBinding' in e)
             prefix = ""
-            separator = ""
+            separator = " "
             if "inputBinding" in e:
                 if "prefix" in e["inputBinding"]:
                     prefix = e["inputBinding"]["prefix"]
