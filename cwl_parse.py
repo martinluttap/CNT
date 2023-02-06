@@ -458,6 +458,8 @@ class CWLFile:
             ret_str = "${{{}.baseName}}".format(param_name)
         elif str.lower(method_call) == "tostring":
             ret_str = "${{{}}}".format(param_name)
+        elif method_call == "basename":
+            ret_str = "${{{}.name}}".format(param_name)
 
         return ret_str
 
@@ -603,6 +605,11 @@ class CWLFile:
             ret_str += self.get_out_type(e) + ' "{}"\t, emit: {}\n\t'.format(
                out_glob, e["id"]
             )
+            if 'secondaryFiles' in e:
+                for suffix in e['secondaryFiles']:
+                    ret_str += '\t' + self.get_out_type(e) + ' "{}{}"\t, emit: {}_{}\n\t'.format(
+                        out_glob, suffix, e["id"], suffix.lstrip('.')
+                    )
 
         return ret_str
 
