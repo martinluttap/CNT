@@ -387,12 +387,8 @@ class CWLFile:
                     if "null" not in e["type"]:
                         if "prefix" in e["inputBinding"]:
                             prefix = e["inputBinding"]["prefix"] 
-                            # arguments.append(e["inputBinding"]["prefix"])
-                        # arguments.append("${{{}}}".format(e["id"]))
                         arg_val = "${{{}}}".format(e["id"])
-                        # prefix_and_val += "${{{}}}".format(e["id"])
                     else:
-                        # arguments.append("${{{}}}".format("opt_" + e["id"]))
                         arg_val = "${{{}}}".format("opt_" + e["id"])
                     
                     # Now we construct
@@ -408,9 +404,7 @@ class CWLFile:
                 # javascript. We need to find a way to handle this, but for now
                 # let's just the whole thing as a string. This way it's easy to
                 # fine-tune the translation output. 
-                val_from = re.sub("\"", '', 
-                            e['inputBinding']['valueFrom'].lstrip("$(").rstrip(")"))
-                prefix_and_val = prefix + val_from
+                prefix_and_val = prefix + self.translate_js(e['inputBinding']['valueFrom'])
             arguments.append(prefix_and_val)
                 
         ret_script += " ".join(arguments)
@@ -424,22 +418,45 @@ class CWLFile:
         return " > " + redirect_outpath
 
     def translate_js(self, js_string):
-        # Suppose the javascript is $(inputs.bam.nameroot + ".flagstat")
+        # We observe that we can broadly classify the javascript when binding as:
+        #   $([string|call][ + (string|call)]*)
+        # e.g.: 
+        # $("-Xmx" + inputs.java_mem.toString() + "G")
+        # $(inputs.bam.nameroot + ".flagstat")
+        # $('/usr/local/bin/picard.jar')
+        #
+        # An exception is the pattern: $(inputs.INPUT.nameroot).pdf,
+        # which itself can be treated exactly like $(inputs.INPUT.nameroot + ".pdf")
+        # (mentioned above). Thus, for now it suffice to handle the three cases above.
+
+        tokens = re.findall("([^(?!(\$\+))\s]+)", js_string)
+        ret_str = ""
+        for token in tokens:
+            if self.check_is_js_method_call(token):
+                ret_str += self.handle_js_method_call(token)
+            else:
+                ret_str += token.replace('\"', '').replace('\'', '')
+
+        return ret_str
+
+    def handle_js_method_call(self, js_method_call):
+        # Translate js function/method calls to its nextflow equivalent
         
-        # Note that we assume all the following searches always yield a match.
-        # Get 'bam'
-        param_name = re.search("(?<=\.)(\w+?)(?=\.)", js_string).group(0)
-        # Get 'nameroot'
-        js_call = re.search("(?<=\.)(\w+?)(?=\ |\))", js_string).group(0)
-        # get 'flagstat'
-        suffix = re.search("(?<=\"\.)(.+?)(?=\")", js_string).group(0)
+        # Method calls should have 3 tokens when splitted by '.'
+        assert(len(js_method_call.split('.')) == 3)
 
-        # Here we maintain a 'lookup table' for js <--> nextflow calls
-        nf_call = ""
-        if js_call == "nameroot":
-            nf_call = "baseName"
+        # We should get "inputs.<param_name>.<method_call>".
+        # We don't need the 'inputs' part for now.
+        _, param_name, method_call = js_method_call.split('.')
 
-        return "${{{}.{}}}.{}".format(param_name, nf_call, suffix)
+        # Here we simply maintain a 'lookup table' for js <--> nextflow calls
+        ret_str = None
+        if method_call == "nameroot":
+            ret_str = "${{{}.baseName}}".format(param_name)
+        elif str.lower(method_call) == "tostring":
+            ret_str = "${{{}}}".format(param_name)
+
+        return ret_str
 
     def construct_outputs(self):
         ret_outputs = []
@@ -538,6 +555,13 @@ class CWLFile:
                     is_file = True
 
         return is_file
+
+    def check_is_js_method_call(self, js_string):
+        # We simply check whether the string has multiple "."
+        if js_string.count('.') > 1:
+            return True
+        else:
+            return False
 
     def get_inp_type(self, inp):
         inp_type = None
