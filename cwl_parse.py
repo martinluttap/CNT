@@ -420,23 +420,26 @@ class CWLFile:
         return ret_script
 
     def construct_stdout(self):
+        redirect_outpath = self.translate_js(self.cwl_stdout)
+        return " > " + redirect_outpath
+
+    def translate_js(self, js_string):
         # Suppose the javascript is $(inputs.bam.nameroot + ".flagstat")
+        
+        # Note that we assume all the following searches always yield a match.
         # Get 'bam'
-        param_name = re.search("(?<=\.)(\w+?)(?=\.)", self.cwl_stdout).group(0)
+        param_name = re.search("(?<=\.)(\w+?)(?=\.)", js_string).group(0)
         # Get 'nameroot'
-        js_call = re.search("(?<=\.)(\w+?)(?=\ |\))", self.cwl_stdout).group(0)
+        js_call = re.search("(?<=\.)(\w+?)(?=\ |\))", js_string).group(0)
         # get 'flagstat'
-        suffix = re.search("(?<=\"\.)(.+?)(?=\")", self.cwl_stdout).group(0)
-        # Note that we assume all the searches always yield match 
+        suffix = re.search("(?<=\"\.)(.+?)(?=\")", js_string).group(0)
 
         # Here we maintain a 'lookup table' for js <--> nextflow calls
         nf_call = ""
         if js_call == "nameroot":
             nf_call = "baseName"
 
-        redirect_outpath = "${{{}.{}}}.{}".format(param_name, nf_call, suffix)
-        return " > " + redirect_outpath
-
+        return "${{{}.{}}}.{}".format(param_name, nf_call, suffix)
 
     def construct_outputs(self):
         ret_outputs = []
@@ -563,8 +566,15 @@ class CWLFile:
     def format_output_list(self, out_list: List) -> str:
         ret_str = ""
         for e in out_list:
+            cwl_glob =  e["outputBinding"]["glob"]
+            out_glob = None
+            if "$" in cwl_glob:
+                # This is most likely a javascript
+                out_glob = self.translate_js(cwl_glob)
+            else: 
+                out_glob = cwl_glob
             ret_str += self.get_out_type(e) + ' "{}"\t, emit: {}\n\t'.format(
-                e["outputBinding"]["glob"].lstrip("$('").rstrip("')"), e["id"]
+               out_glob, e["id"]
             )
 
         return ret_str
