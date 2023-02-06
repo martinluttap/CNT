@@ -41,6 +41,7 @@ class CWLFile:
         self.cwl_dependency_aliases = None
         self.cwl_basecommand = None
         self.cwl_arguments = None
+        self.cwl_stdout = None
 
         # Initialization methods
         self.get_cwl_object(cwl_path)
@@ -55,6 +56,7 @@ class CWLFile:
         self.get_dependency_aliases()
         self.get_basecommand()
         self.get_arguments()
+        self.get_stdout()
         # self.get_id()
 
     def get_cwl_object(self, cwl_path):
@@ -121,7 +123,11 @@ class CWLFile:
     def get_arguments(self):
         if "arguments" in self.cwl_object:
             self.cwl_arguments = self.cwl_object["arguments"]
-
+    
+    def get_stdout(self):
+        if "stdout" in self.cwl_object:
+            self.cwl_stdout = self.cwl_object["stdout"]
+    
     def print_cwl_object(self):
         print(self.cwl_object)
 
@@ -337,17 +343,18 @@ class CWLFile:
             for e in new_arguments:
                 e['is_argument'] = True
 
-        # If either input or new_arguments does not have position, we assign 
-        # priority based on the following rules:
-        # 1.) Arguments have higher priority than inputs
-        # 2.) Among arguments and inputs themselves, we assign the same arbitrary big value
+        # If either input or new_arguments does not have position, we assign
+        # priority based on the following rules: 1.) Arguments have higher
+        # priority than inputs 2.) Among arguments and inputs themselves, we
+        # assign the same arbitrary big value
         cmd_arguments = inputs_with_binding + new_arguments
         for e in cmd_arguments:
             if "inputBinding" in e:
                 if "position" in e:
                     pass
                 else:
-                    # Here we ensure that arguments have higher priority than inputs
+                    # Here we ensure that arguments have higher priority than
+                    # inputs
                     if 'is_argument' in e:
                         assert(e['is_argument'] == True)
                         e['inputBinding']['position'] = 9998
@@ -366,7 +373,7 @@ class CWLFile:
             val_from = ""
             if 'is_argument' not in e:
                 if "inputBinding" in e:
-                    # Here we get the appropriate value for prefix, separator, 
+                    # Here we get the appropriate value for prefix, separator,
                     # and argument value.
 
                     # First we check the separator
@@ -407,8 +414,29 @@ class CWLFile:
             arguments.append(prefix_and_val)
                 
         ret_script += " ".join(arguments)
+        if self.cwl_stdout:
+            ret_script += self.construct_stdout()
 
         return ret_script
+
+    def construct_stdout(self):
+        # Suppose the javascript is $(inputs.bam.nameroot + ".flagstat")
+        # Get 'bam'
+        param_name = re.search("(?<=\.)(\w+?)(?=\.)", self.cwl_stdout).group(0)
+        # Get 'nameroot'
+        js_call = re.search("(?<=\.)(\w+?)(?=\ |\))", self.cwl_stdout).group(0)
+        # get 'flagstat'
+        suffix = re.search("(?<=\"\.)(.+?)(?=\")", self.cwl_stdout).group(0)
+        # Note that we assume all the searches always yield match 
+
+        # Here we maintain a 'lookup table' for js <--> nextflow calls
+        nf_call = ""
+        if js_call == "nameroot":
+            nf_call = "baseName"
+
+        redirect_outpath = "${{{}.{}}}.{}".format(param_name, nf_call, suffix)
+        return " > " + redirect_outpath
+
 
     def construct_outputs(self):
         ret_outputs = []
