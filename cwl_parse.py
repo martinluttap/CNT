@@ -369,8 +369,7 @@ class CWLFile:
             prefix_and_val = ""
             prefix = ""
             arg_val = ""
-            separator = ""
-            val_from = ""
+            separator = " "
             if 'is_argument' not in e:
                 if "inputBinding" in e:
                     # Here we get the appropriate value for prefix, separator,
@@ -398,13 +397,17 @@ class CWLFile:
                     # JavaScript.
                     pass
             else:
+                separator = " "
                 if "prefix" in e["inputBinding"]:
-                    prefix = e["inputBinding"]["prefix"] 
+                    prefix = e["inputBinding"]["prefix"]
+                if 'separate' in e['inputBinding']:
+                    is_separator = e['inputBinding']['separate']
+                    separator = " " if is_separator else "" 
                 # Now most of the time the argument value here is in the form of
                 # javascript. We need to find a way to handle this, but for now
                 # let's just the whole thing as a string. This way it's easy to
                 # fine-tune the translation output. 
-                prefix_and_val = prefix + self.translate_js(e['inputBinding']['valueFrom'])
+                prefix_and_val = prefix + separator + self.translate_js(e['inputBinding']['valueFrom'])
             arguments.append(prefix_and_val)
                 
         ret_script += " ".join(arguments)
