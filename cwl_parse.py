@@ -172,7 +172,10 @@ class CWLFile:
 
         results = template.substitute(subs)
 
-        outfile = open("{}.nextflow.config".format(str.upper(self.cwl_name)), 'w')
+        outfile = open("{}.nextflow.config".format(
+            os.path.dirname(os.path.abspath(__file__)) + '/' + str.upper(self.cwl_name)),
+            'w'
+        )
         outfile.write(results)
 
     def print_template_process(self):
@@ -437,6 +440,9 @@ class CWLFile:
         for token in tokens:
             if self.check_is_js_method_call(token):
                 ret_str += self.handle_js_method_call(token)
+            elif self.check_is_js_get_attr(token):
+                requested_attr = token.lstrip(".inputs")
+                ret_str += "${{{}}}".format(requested_attr)
             else:
                 ret_str += token.replace('\"', '').replace('\'', '')
 
@@ -504,7 +510,7 @@ class CWLFile:
 
     def print_template_standalone_text(self):
         in_template = open(
-            "{}/templates/template_standalone_test.txt".format(os.getcwd()), "r"
+            "{}/templates/template_standalone_test.txt".format(os.path.dirname(os.path.abspath(__file__))), "r"
         )
         template = Template(in_template.read())
 
@@ -564,6 +570,13 @@ class CWLFile:
     def check_is_js_method_call(self, js_string):
         # We simply check whether the string has multiple "."
         if js_string.count('.') > 1:
+            return True
+        else:
+            return False
+
+    def check_is_js_get_attr(self, js_string):
+        # We check whether it has "inputs."
+        if "inputs." in js_string:
             return True
         else:
             return False
