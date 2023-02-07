@@ -321,7 +321,9 @@ class CWLFile:
 
 
     def construct_script(self):
-        ret_script = " ".join(self.cwl_basecommand)
+        ret_script = " ".join(self.cwl_basecommand) \
+                    if type(self.cwl_basecommand) is list \
+                    else self.cwl_basecommand
 
         # First we take only inputs which has binding. So far we observe two
         # cases for inputs with binding: 1.) Single value, and 2.) Array For
@@ -350,13 +352,13 @@ class CWLFile:
             else:
                 # Case of array of items
                 if 'type' in e:
-                    assert('type' in e['type'])
-                    if e['type']['type'] == 'array':
-                        # We put a flag here for further handling
-                        e['is_array'] = True
-                        e['inputBinding'] = {}
-                        if 'inputBinding' in e['type']:
-                            inputs_with_binding.append(e)
+                    if 'type' in e['type']:
+                        if e['type']['type'] == 'array':
+                            # We put a flag here for further handling
+                            e['is_array'] = True
+                            e['inputBinding'] = {}
+                            if 'inputBinding' in e['type']:
+                                inputs_with_binding.append(e)
 
         # Here we construct a new data structure which contained both elements
         # from arguments and also inputs. As argument elements do not have
