@@ -395,7 +395,7 @@ class CWLFile:
         cmd_arguments = inputs_with_binding + new_arguments
         for e in cmd_arguments:
             if "inputBinding" in e:
-                if "position" in e:
+                if "position" in e['inputBinding']:
                     pass
                 else:
                     # Here we ensure that arguments have higher priority than
@@ -407,7 +407,6 @@ class CWLFile:
                         e['inputBinding']['position'] = 9999
         sorted_inputs = sorted(cmd_arguments, 
                             key=lambda x: x['inputBinding']['position'])
-
         arguments = [" "]
         for e in sorted_inputs:
             prefix_and_val = ""
