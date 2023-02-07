@@ -86,6 +86,13 @@ class CWLFile:
 
         self.container_uri = container_uri
 
+        # At this moment, latest alpine moment does not have /bin/bash,
+        # meanwhile Nextflow hardcoded shell entrypoint as /bin/bash.
+        # This means we can't run files which use 'alpine:latest'.
+        # For now we change it to 'ubuntu:latest'.
+        if "alpine" in self.container_uri:
+            self.container_uri = "ubuntu:latest" 
+
     def get_name(self):
         self.cwl_name = self.cwl_object["id"].split("#")[-1]
 
@@ -248,7 +255,7 @@ class CWLFile:
                 # so we number them.
                 val_to_check = None
                 val_against = None
-                if self.check_is_file(e):
+                if self.check_is_file(e) or self.check_is_dir(e):
                     count_opt_input_file += 1
                     val_to_check = opt_name + ".name"
                     val_against = '"NO_FILE{}"'.format(count_opt_input_file)
@@ -283,14 +290,16 @@ class CWLFile:
                 param_name = None
                 default_val = None
                 param_name = "params." + e["id"]
-                if self.check_is_file(e):
+                if self.check_is_file(e) or self.check_is_dir(e):
                     count_opt_input_file += 1
                     default_val = 'file("NO_FILE{}")'.format(count_opt_input_file)
                 else:
                     default_val = '""'
                 line = '{} = {} ? {}{} : {}'.format(
                     opt_name, param_name, param_name,  (
-                        ".path" if self.check_is_file(e) else ""
+                        ".path" if (self.check_is_file(e) or \
+                                    self.check_is_dir(e)) 
+                                else ""
                     ), 
                     default_val
                 )
@@ -312,7 +321,9 @@ class CWLFile:
                 arg = "opt_" + e['id']
             else: 
                 arg = "params." + e['id']  + (
-                        ".path" if self.check_is_file(e) else ""
+                        ".path" if (self.check_is_file(e)  or \
+                                    self.check_is_dir(e))
+                                else ""
                     )
             arg_lines.append(arg)
 
@@ -498,6 +509,15 @@ class CWLFile:
             ret_str = "${{{}}}".format(param_name)
         elif method_call == "basename":
             ret_str = "${{{}.name}}".format(param_name)
+        elif method_call == "dirname":
+            # So far this method is used to move to a directory which contains
+            # all other input files. 
+            # This is useful when our WFE is cwltool, since the staged files 
+            # might not be at the same place as initial working directory. 
+            # But in the case of nextflow, staged files are always in the 
+            # initial working directory, so we don't need to move around. 
+            # Thus, we put '.' to indicate we will stay at the same directory. 
+            ret_str = ".".format(param_name)
 
         return ret_str
 
@@ -586,6 +606,9 @@ class CWLFile:
 
         return is_optional
 
+    def check_is_dir(self, inp):
+        return inp['type'] == "Directory"
+
     def check_is_file(self, inp):
         is_file = False
         if type(inp["type"]) is str:
@@ -600,9 +623,12 @@ class CWLFile:
         return is_file
 
     def check_is_js_method_call(self, js_string):
-        # We simply check whether the string has multiple "."
+        # We consider a string as a method call if it either:
+        # 1.) Has "self.", or
+        # 2.) It consists of 3 tokens separated by '.'
+        is_method_call = re.match("([^?!\'w]+)\.([^w]+)\.([^w]+)", js_string)
         if ("self." in js_string) or \
-            (js_string.count('.') > 1 and not (("\"" or "\'") in js_string)):
+            is_method_call:
             return True
         else:
             return False
@@ -619,7 +645,7 @@ class CWLFile:
         if self.cwl_class == "Workflow":
             inp_type = ""
         else:  # CommandLineTool or ExpressionTool
-            if self.check_is_file(inp):
+            if self.check_is_file(inp) or self.check_is_dir(inp):
                 inp_type = "path"
             else:
                 inp_type = "val"
