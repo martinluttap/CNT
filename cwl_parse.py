@@ -323,11 +323,40 @@ class CWLFile:
     def construct_script(self):
         ret_script = " ".join(self.cwl_basecommand)
 
-        # First we take only inputs which has binding
+        # First we take only inputs which has binding. So far we observe two
+        # cases for inputs with binding: 1.) Single value, and 2.) Array For
+        # array input, there might be multiple inputBindings, and they might be
+        # hidden deep within the data structure. We might want to be careful on
+        # handling that. Each array element might have an inputBinding which is
+        # used to tell the prefix. However, the array itself can also have
+        # inputBinding which tells which position should we put the array at. 
+        # For example:
+        #  filesB:
+        #     type: 
+        #       type: array
+        #       items: string
+        #       inputBinding:
+        #           prefix: -B=
+        #           separate: false
+        #     inputBinding:
+        #       position: 2
+        # Tells us that filesB array should be in 2nd position, while each element
+        # should be prefixed with -B= 
         inputs_with_binding = []
         for e in self.cwl_inputs:
+            # Case of single value
             if 'inputBinding' in e:
                 inputs_with_binding.append(e)
+            else:
+                # Case of array of items
+                if 'type' in e:
+                    assert('type' in e['type'])
+                    if e['type']['type'] == 'array':
+                        # We put a flag here for further handling
+                        e['is_array'] = True
+                        e['inputBinding'] = {}
+                        if 'inputBinding' in e['type']:
+                            inputs_with_binding.append(e)
 
         # Here we construct a new data structure which contained both elements
         # from arguments and also inputs. As argument elements do not have
@@ -363,7 +392,6 @@ class CWLFile:
                         e['inputBinding']['position'] = 9998
                     else:
                         e['inputBinding']['position'] = 9999
-
         sorted_inputs = sorted(cmd_arguments, 
                             key=lambda x: x['inputBinding']['position'])
 
@@ -387,7 +415,10 @@ class CWLFile:
                     # we define a new variable and ensure "opt_<e>" resolves to
                     # ""
                     if "null" not in e["type"]:
-                        if "prefix" in e["inputBinding"]:
+                        # Here we handle an array
+                        if 'is_array' in e:
+                            prefix = e['type']['inputBinding']['prefix']
+                        elif "prefix" in e["inputBinding"]:
                             prefix = e["inputBinding"]["prefix"] 
                         arg_val = "${{{}}}".format(e["id"])
                     else:
@@ -424,16 +455,15 @@ class CWLFile:
         return " > " + redirect_outpath
 
     def translate_js(self, js_string):
-        # We observe that we can broadly classify the javascript when binding as:
-        #   $([string|call][ + (string|call)]*)
-        # e.g.: 
-        # $("-Xmx" + inputs.java_mem.toString() + "G")
-        # $(inputs.bam.nameroot + ".flagstat")
+        # We observe that we can broadly classify the javascript when binding
+        #   as: $([string|call][ + (string|call)]*) e.g.: $("-Xmx" +
+        # inputs.java_mem.toString() + "G") $(inputs.bam.nameroot + ".flagstat")
         # $('/usr/local/bin/picard.jar')
         #
-        # An exception is the pattern: $(inputs.INPUT.nameroot).pdf,
-        # which itself can be treated exactly like $(inputs.INPUT.nameroot + ".pdf")
-        # (mentioned above). Thus, for now it suffice to handle the three cases above.
+        # An exception is the pattern: $(inputs.INPUT.nameroot).pdf, which
+        # itself can be treated exactly like $(inputs.INPUT.nameroot + ".pdf")
+        # (mentioned above). Thus, for now it suffice to handle the three cases
+        # above.
 
         tokens = re.findall("([^(?!(\$\+))\s]+)", js_string)
         ret_str = ""
@@ -454,8 +484,8 @@ class CWLFile:
         # Method calls should have 3 tokens when splitted by '.'
         assert(len(js_method_call.split('.')) == 3)
 
-        # We should get "inputs.<param_name>.<method_call>".
-        # We don't need the 'inputs' part for now.
+        # We should get "inputs.<param_name>.<method_call>". We don't need the
+        # 'inputs' part for now.
         _, param_name, method_call = js_method_call.split('.')
 
         # Here we simply maintain a 'lookup table' for js <--> nextflow calls
