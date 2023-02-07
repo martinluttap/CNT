@@ -599,7 +599,7 @@ class CWLFile:
 
     def check_is_js_method_call(self, js_string):
         # We simply check whether the string has multiple "."
-        if js_string.count('.') > 1:
+        if js_string.count('.') > 1 and not ("\"" or "\'" in js_string):
             return True
         else:
             return False
