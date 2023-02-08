@@ -309,24 +309,38 @@ class CWLFile:
 
         return ret_declaration
 
+    def construct_workflow_arg(self, input_elem):
+        arg_name = None
+        if self.check_is_optional(input_elem):
+            arg_name = "opt_" + input_elem['id']
+        else:
+            arg_name = "params." + input_elem['id']  + (
+                            ".path" if (self.check_is_file(input_elem)  or \
+                                        self.check_is_dir(input_elem))
+                                    else ""
+                        )
+        return arg_name
+
     def construct_workflow_process_args(self):
         # If input is optional, we pass opt_<input_name> as argument, which is
         # defined by construct_workflow_opt_declaration. Else we pass
         # params.<input_name>. 
-
         arg_lines = []
         for e in self.cwl_inputs:
-            arg = None
-            if self.check_is_optional(e):
-                arg = "opt_" + e['id']
-            else: 
-                arg = "params." + e['id']  + (
-                        ".path" if (self.check_is_file(e)  or \
-                                    self.check_is_dir(e))
-                                else ""
-                    )
+            arg = self.construct_workflow_arg(e)
             arg_lines.append(arg)
-
+            # If input does not request secondary files,
+            # we simply add it to the list of arguments.
+            # Else we construct new arguments which takes 
+            # the input's value plus the secondary files suffix.
+            # Note that these new arguments might not be included 
+            # in script construction, so we're adding the logic 
+            # to include them directly here.
+            if 'secondaryFiles' in e:
+                for suffix in e['secondaryFiles']:
+                    secondary_arg = self.construct_workflow_arg(e) + " + \"{}\"".format(suffix)
+                    arg_lines.append(secondary_arg)
+                
         ret_args = ',\n\t\t'.join(arg_lines) 
         return ret_args
 
@@ -590,11 +604,21 @@ class CWLFile:
                 )
             )
 
+    def construct_input_name(self, input_val):
+        return input_val["id"] if "null" not in input_val["type"] \
+                else ("opt_" + input_val["id"])
+
     def format_input_list(self, inp_list: List) -> str:
         ret_str = ""
         for e in inp_list:
-            e_name = e["id"] if "null" not in e["type"] else ("opt_" + e["id"])
+            e_name = self.construct_input_name(e)
             ret_str += self.get_inp_type(e) + " {}\n\t\t".format(e_name)
+            # If input has secondaryFiles, we create new inputs as their placeholder
+            if 'secondaryFiles' in e:
+                for suffix in e['secondaryFiles']:
+                    e_name = self.construct_input_name(e)
+                    e_name += "_SECONDARY_{}".format(suffix.lstrip('.').upper())
+                    ret_str += self.get_inp_type(e) + " {}\n\t\t".format(e_name)
 
         return ret_str
 
