@@ -495,13 +495,17 @@ class CWLFile:
         # The first pattern is checking whether a prefix is supplied, 
         # then append the prefix to various file names. 
         
+        # For each append of optional prefix, we get the declared javascript
+        # variable (group 1), CWL input variable in which we store the prefix
+        # (group 2), and the appended str (group 4). 
         pattern = r"(?s)var[\s]+(\w+)[\s]+\=[\s]+inputs\.(\w+)[\s]+\?[\s]+.+(\1)[\s]+\+[\s]+[\'|\"](.+)[\'|\"]" 
         is_appending_opt_prefix = re.search(pattern, js_string)
         ret_str = ""
         if is_appending_opt_prefix:
             prefix_var = is_appending_opt_prefix.group(2)
             appended_str = is_appending_opt_prefix.group(4)
-            
+
+            # We need to check whether CWL input variable is optional.            
             is_var_opt = False
             for e in self.cwl_inputs:
                 if (e['id'] == prefix_var):
