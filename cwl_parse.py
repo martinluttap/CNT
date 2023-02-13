@@ -475,7 +475,6 @@ class CWLFile:
                 # javascript. We need to find a way to handle this, but for now
                 # let's just the whole thing as a string. This way it's easy to
                 # fine-tune the translation output. 
-                logger.debug(e)
                 prefix_and_val = prefix + separator + self.translate_js(e['inputBinding']['valueFrom'])
             arguments.append(prefix_and_val)
                 
@@ -489,27 +488,60 @@ class CWLFile:
         redirect_outpath = self.translate_js(self.cwl_stdout)
         return " > " + redirect_outpath
 
-    def translate_js(self, js_string):
-        # We observe that we can broadly classify the javascript when binding
-        #   as: $([string|call][ + (string|call)]*) e.g.: $("-Xmx" +
-        # inputs.java_mem.toString() + "G") $(inputs.bam.nameroot + ".flagstat")
-        # $('/usr/local/bin/picard.jar')
-        #
-        # An exception is the pattern: $(inputs.INPUT.nameroot).pdf, which
-        # itself can be treated exactly like $(inputs.INPUT.nameroot + ".pdf")
-        # (mentioned above). Thus, for now it suffice to handle the three cases
-        # above.
+    def handle_js_code_block(self, js_string):
+        # For now we catalog the types of JS code blocks, then handle each of
+        # them in a case-by-case basis.
 
-        tokens = re.findall("([^(?!(\$\+))\s]+)", js_string)
+        # The first pattern is checking whether a prefix is supplied, 
+        # then append the prefix to various file names. 
+        
+        pattern = r"(?s)var[\s]+(\w+)[\s]+\=[\s]+inputs\.(\w+)[\s]+\?[\s]+.+(\1)[\s]+\+[\s]+[\'|\"](.+)[\'|\"]" 
+        is_appending_opt_prefix = re.search(pattern, js_string)
         ret_str = ""
-        for token in tokens:
-            if self.check_is_js_method_call(token):
-                ret_str += self.handle_js_method_call(token)
-            elif self.check_is_js_get_attr(token):
-                requested_attr = token.lstrip(".inputs")
-                ret_str += "${{{}}}".format(requested_attr)
-            else:
-                ret_str += token.replace('\"', '').replace('\'', '')
+        if is_appending_opt_prefix:
+            prefix_var = is_appending_opt_prefix.group(2)
+            appended_str = is_appending_opt_prefix.group(4)
+            
+            is_var_opt = False
+            for e in self.cwl_inputs:
+                if (e['id'] == prefix_var):
+                    is_var_opt = True
+                    break
+            opt_str = "opt_" if is_var_opt else ""
+            ret_str = "${{{}{} ? : ''}}{}".format(opt_str, prefix_var, appended_str)
+            
+        return ret_str
+
+    def translate_js(self, js_string):
+        # The idea here is to first try to classify the code from 'eagle-eyed'
+        # view, where we consider the whole code block, before looking into its
+        # tokens. Ideally recognizing a whole code block should be done by an 
+        # ML model in the future.
+        ret_str = ""
+        if self.check_is_block_of_js(js_string):
+            ret_str += self.handle_js_code_block(js_string)
+        else:            
+            # Here we look into the code's fine-grained features (tokens).
+
+            # We observe that we can broadly classify the javascript when binding
+            #   as: $([string|call][ + (string|call)]*) e.g.: $("-Xmx" +
+            # inputs.java_mem.toString() + "G") $(inputs.bam.nameroot + ".flagstat")
+            # $('/usr/local/bin/picard.jar')
+            #
+            # An exception is the pattern: $(inputs.INPUT.nameroot).pdf, which
+            # itself can be treated exactly like $(inputs.INPUT.nameroot + ".pdf")
+            # (mentioned above). Thus, for now it suffice to handle the three cases
+            # above.
+
+            tokens = re.findall("([^(?!(\$\+))\s]+)", js_string)
+            for token in tokens:
+                if self.check_is_js_method_call(token):
+                    ret_str += self.handle_js_method_call(token)
+                elif self.check_is_js_get_attr(token):
+                    requested_attr = token.lstrip(".inputs")
+                    ret_str += "${{{}}}".format(requested_attr)
+                else:
+                    ret_str += token.replace('\"', '').replace('\'', '')
 
         return ret_str
 
@@ -659,6 +691,15 @@ class CWLFile:
 
         return is_file
 
+    def check_is_block_of_js(self, js_string):
+        # How do we know whether a piece of string is a JS code block? By 'code
+        # block' here we mean those code which have multiple lines, instead of a
+        # single method call whose examples abound in GDC workflows. There
+        # should be a better way to classify such code block, but for now we opt
+        # for a very simplistic 'does this include variable declaration?'
+
+        return "var " in js_string # Variable declaration like 'var pfx = ..'
+
     def check_is_js_method_call(self, js_string):
         # We consider a string as a method call if it either:
         # 1.) Has "self.", or
@@ -708,7 +749,6 @@ class CWLFile:
             out_glob = None
             if "$" in cwl_glob:
                 # This is most likely a javascript
-                logger.debug("")
                 out_glob = self.translate_js(cwl_glob)
             else: 
                 out_glob = cwl_glob
