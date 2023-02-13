@@ -255,7 +255,8 @@ class CWLFile:
                     separator = " " if is_separator else ""
             if self.check_is_optional(e):
                 opt_name = "opt_" + e["id"]
-                opt_declaration_val = "{}{}${{{}}}".format(prefix, separator, opt_name)
+                js_method_call = ".join(' ')" if self.check_is_array_of_items(e) else ""
+                opt_declaration_val = "{}{}${{{}{}}}".format(prefix, separator, opt_name, js_method_call)
 
                 # If input_type is path, we check its name against NO_FILE else
                 # if it's val we simply check whether it's empty. Apparently
@@ -512,7 +513,7 @@ class CWLFile:
                     is_var_opt = True
                     break
             opt_str = "opt_" if is_var_opt else ""
-            ret_str = "${{{}{} ? : ''}}{}".format(opt_str, prefix_var, appended_str)
+            ret_str = "${{{}{} ?: ''}}{}".format(opt_str, prefix_var, appended_str)
             
         return ret_str
 
@@ -672,6 +673,17 @@ class CWLFile:
 
         return ret_str
 
+    def check_is_array_of_items(self, inp):
+        is_array_of_items = False
+        for e in inp['type']:
+            if type(e) is dict:
+                assert('items' in e and 'type' in e)
+                if (e['items'] == 'string' and e['type'] == 'array'):
+                    is_array_of_items = True
+                    break
+        
+        return is_array_of_items
+                
     def check_is_optional(self, inp):
         is_optional = False
         if "null" in inp['type']:
@@ -756,7 +768,7 @@ class CWLFile:
                 out_glob = self.translate_js(cwl_glob)
             else: 
                 out_glob = cwl_glob
-            ret_str += self.get_out_type(e) + ' "{}"\t, emit: {}\n\t'.format(
+            ret_str += self.get_out_type(e) + ' "{}"\t, emit: {}\n\t\t'.format(
                out_glob, e["id"]
             )
             if 'secondaryFiles' in e:
@@ -822,3 +834,4 @@ if __name__ == "__main__":
     # 2.) Concatenate workflow() for testing purpose
     if args.unit_test:
         cwl_file.print_template_standalone_text()
+
