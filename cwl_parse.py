@@ -4,11 +4,19 @@ from pathlib import Path
 from string import Template
 from typing import List
 
+import logging
 import os
 import re
 import sys
 
 
+# Logging
+logger = logging.getLogger(__name__)
+FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
+logging.basicConfig(format=FORMAT)
+logger.setLevel(logging.DEBUG)
+
+# Argument parsing
 parser = ArgumentParser(description="Automated CWL <-> X Translator")
 parser.add_argument("cwl_source", help="Source CWL file")
 parser.add_argument(
@@ -467,6 +475,7 @@ class CWLFile:
                 # javascript. We need to find a way to handle this, but for now
                 # let's just the whole thing as a string. This way it's easy to
                 # fine-tune the translation output. 
+                logger.debug(e)
                 prefix_and_val = prefix + separator + self.translate_js(e['inputBinding']['valueFrom'])
             arguments.append(prefix_and_val)
                 
@@ -531,7 +540,12 @@ class CWLFile:
             # initial working directory, so we don't need to move around. 
             # Thus, we put '.' to indicate we will stay at the same directory. 
             ret_str = ".".format(param_name)
-
+        else:
+            # Ideally we should always let ret_str=None when we can't handle the
+            # JS. This makes sure the program goes into error rather that
+            # running with transient bugs. However this branch might be enabled
+            # for debugging/development purpose. 
+            ret_str = ""
         return ret_str
 
     def construct_outputs(self):
@@ -694,6 +708,7 @@ class CWLFile:
             out_glob = None
             if "$" in cwl_glob:
                 # This is most likely a javascript
+                logger.debug("")
                 out_glob = self.translate_js(cwl_glob)
             else: 
                 out_glob = cwl_glob
