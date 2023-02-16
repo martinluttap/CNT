@@ -554,7 +554,8 @@ class CWLFile:
         # Translate js function/method calls to its nextflow equivalent
         
         # Method calls should have 3 tokens when splitted by '.'
-        assert(len(js_method_call.split('.')) == 3)
+        if len(js_method_call.split('.')) != 3:
+            return ""
 
         # We should get "inputs.<param_name>.<method_call>". We don't need the
         # 'inputs' part for now.
