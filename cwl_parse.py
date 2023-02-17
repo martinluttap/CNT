@@ -83,7 +83,7 @@ class CWLFile:
         self.cwl_object = saved_obj
 
     def get_id(self):
-        self.cwl_id = self.cwl_object["id"]
+        self.cwl_id = self.cwl_object["id"].replace('-', '_')
 
     def get_container_uri(self):
         container_uri = None
@@ -102,7 +102,7 @@ class CWLFile:
             self.container_uri = "ubuntu:latest" 
 
     def get_name(self):
-        self.cwl_name = self.cwl_object["id"].split("#")[-1]
+        self.cwl_name = self.cwl_object["id"].replace('-', '_').split("#")[-1]
 
     def get_class(self):
         self.cwl_class = self.cwl_object["class"]
@@ -127,7 +127,7 @@ class CWLFile:
         if self.cwl_steps:
             dep_aliases = {}
             for e in self.cwl_steps:
-                dep_aliases[e["run"]] = e["id"]
+                dep_aliases[e["run"]] = e["id"].replace('-', '_')
 
             self.cwl_dependency_aliases = dep_aliases
 
@@ -156,7 +156,7 @@ class CWLFile:
             print(e)
 
     def print_id(self):
-        print(self.cwl_object["id"])
+        print(self.cwl_object["id"].replace('-', '_'))
 
     def print_outputs(self):
         outputs = self.construct_outputs()
@@ -254,7 +254,7 @@ class CWLFile:
                     is_separator = e['inputBinding']['separator']
                     separator = " " if is_separator else ""
             if self.check_is_optional(e):
-                opt_name = "opt_" + e["id"]
+                opt_name = "opt_" + e["id"].replace('-', '_')
                 js_method_call = ".join(' ')" if self.check_is_array_of_items(e) else ""
                 opt_declaration_val = "{}{}${{{}{}}}".format(prefix, separator, opt_name, js_method_call)
 
@@ -291,14 +291,14 @@ class CWLFile:
         count_opt_input_file = 0
         for e in self.cwl_inputs:
             if self.check_is_optional(e):
-                opt_name = "opt_" + e["id"]
+                opt_name = "opt_" + e["id"].replace('-', '_')
                 # If input_type is path, we check its name against NO_FILE else
                 # if it's val we simply check whether it's empty. Apparently
                 # Nextflow complains if >1 optional input use file("NO_FILE"),
                 # so we number them.
                 param_name = None
                 default_val = None
-                param_name = "params." + e["id"]
+                param_name = "params['{}']".format(e["id"].replace('-', '_'))
                 if self.check_is_file(e) or self.check_is_dir(e):
                     count_opt_input_file += 1
                     default_val = 'file("NO_FILE{}")'.format(count_opt_input_file)
@@ -323,7 +323,7 @@ class CWLFile:
         if self.check_is_optional(input_elem):
             arg_name = "opt_" + input_elem['id']
         else:
-            arg_name = "params." + input_elem['id']  + (
+            arg_name = "params['{}']".format(input_elem['id'])  + (
                             ".path" if (self.check_is_file(input_elem)  or \
                                         self.check_is_dir(input_elem))
                                     else ""
@@ -333,7 +333,7 @@ class CWLFile:
     def construct_workflow_process_args(self):
         # If input is optional, we pass opt_<input_name> as argument, which is
         # defined by construct_workflow_opt_declaration. Else we pass
-        # params.<input_name>. 
+        # params['{}'].format(<input_name>). 
         arg_lines = []
         for e in self.cwl_inputs:
             arg = self.construct_workflow_arg(e)
@@ -455,9 +455,9 @@ class CWLFile:
                             prefix = e['type']['inputBinding']['prefix']
                         elif "prefix" in e["inputBinding"]:
                             prefix = e["inputBinding"]["prefix"] 
-                        arg_val = "${{{}}}".format(e["id"])
+                        arg_val = "${{{}}}".format(e["id"].replace('-', '_'))
                     else:
-                        arg_val = "${{{}}}".format("opt_" + e["id"])
+                        arg_val = "${{{}}}".format("opt_" + e["id"].replace('-', '_'))
                     
                     # Now we construct
                     prefix_and_val = "{}{}{}".format(prefix, separator, arg_val)
@@ -601,13 +601,13 @@ class CWLFile:
         )
         template = Template(in_template.read())
 
-        wf_take_list = [e["id"] for e in self.cwl_inputs]
+        wf_take_list = [e["id"].replace('-', '_') for e in self.cwl_inputs]
         wf_take_bindings = []
 
-        wf_main_list = ["{}()".format(e["id"].upper()) for e in self.cwl_steps]
+        wf_main_list = ["{}()".format(e["id"].replace('-', '_').upper()) for e in self.cwl_steps]
         wf_main_bindings = []
 
-        wf_emit_list = [e["id"] for e in self.cwl_outputs]
+        wf_emit_list = [e["id"].replace('-', '_') for e in self.cwl_outputs]
         wf_emit_bindings = []
 
         wf_take = self.format_list(wf_take_list, wf_take_bindings)
@@ -657,8 +657,8 @@ class CWLFile:
             )
 
     def construct_input_name(self, input_val):
-        return input_val["id"] if "null" not in input_val["type"] \
-                else ("opt_" + input_val["id"])
+        return input_val["id"].replace('-', '_') if "null" not in input_val["type"] \
+                else ("opt_" + input_val["id"].replace('-', '_'))
 
     def format_input_list(self, inp_list: List) -> str:
         ret_str = ""
@@ -770,12 +770,12 @@ class CWLFile:
             else: 
                 out_glob = cwl_glob
             ret_str += self.get_out_type(e) + ' "{}"\t, emit: {}\n\t\t'.format(
-               out_glob, e["id"]
+               out_glob, e["id"].replace('-', '_')
             )
             if 'secondaryFiles' in e:
                 for suffix in e['secondaryFiles']:
                     ret_str += '\t' + self.get_out_type(e) + ' "{}{}"\t, emit: {}_{}\n\t'.format(
-                        out_glob, suffix, e["id"], suffix.lstrip('.')
+                        out_glob, suffix, e["id"].replace('-', '_'), suffix.lstrip('.')
                     )
 
         return ret_str
