@@ -4,9 +4,12 @@ from pathlib import Path
 from string import Template
 from typing import List
 
+import ast 
+import json
 import logging
 import os
 import re
+import subprocess
 import sys
 
 
@@ -20,6 +23,12 @@ logger.setLevel(logging.DEBUG)
 parser = ArgumentParser(description="Automated CWL <-> X Translator")
 parser.add_argument("cwl_source", help="Source CWL file")
 parser.add_argument(
+    "--inspect_docker",
+    action="store_true",
+    help="Optimize translation by allowing inspection of docker images. \
+        WARNING: This option will pull the docker images and does not clean them up.",
+)
+parser.add_argument(
     "--unit_test",
     action="store_true",
     help="Append a Workflow(...) call for stand-alone execution.",
@@ -29,6 +38,7 @@ parser.add_argument(
     action="store_true",
     help="Generate <cwl_source>.nextflow.config for docker usage.",
 )
+parser.set_defaults(inspect_docker=False)
 parser.set_defaults(unit_test=False)
 parser.set_defaults(with_config=False)
 args = parser.parse_args()
@@ -482,6 +492,22 @@ class CWLFile:
         ret_script += " ".join(arguments)
         if self.cwl_stdout:
             ret_script += self.construct_stdout()
+
+        # If inspect_docker is enabled, we check whether the container has entry
+        # point. If it does, we add '#!' and '#' at beginning and end of the
+        # script, respectively.
+        if args.inspect_docker:
+            image_url = self.container_uri
+            bash_command = "docker inspect {}".format(image_url)
+            process = subprocess.run(bash_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            output = r"{}".format(process.stdout.decode('utf8'))
+            inspect_result = json.loads(output)
+            assert(len(inspect_result) == 1) # It doesn't make sense to have more than one
+            assert("ContainerConfig" in inspect_result[0])
+            entry_point = inspect_result[0]['ContainerConfig']['Entrypoint'] 
+            if entry_point:
+                ret_script = "#!" + ret_script
+                ret_script = ret_script + " #"
 
         return ret_script
 
