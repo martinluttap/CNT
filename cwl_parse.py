@@ -340,6 +340,14 @@ class CWLFile:
                         )
         return arg_name
 
+    def handle_cadet_suffix(self, input_elem, suffix):
+        ret = ""
+        assert(suffix in input_elem['secondaryFiles'])
+        if '^' in suffix:
+            ret += ".take(params['{}'].path.lastIndexOf('.'))".format(input_elem['id'])
+
+        return ret
+        
     def construct_workflow_process_args(self):
         # If input is optional, we pass opt_<input_name> as argument, which is
         # defined by construct_workflow_opt_declaration. Else we pass
@@ -357,7 +365,10 @@ class CWLFile:
             # to include them directly here.
             if 'secondaryFiles' in e:
                 for suffix in e['secondaryFiles']:
-                    secondary_arg = self.construct_workflow_arg(e) + " + \"{}\"".format(suffix)
+                    secondary_arg = self.construct_workflow_arg(e) + "{} + \"{}\"".format(
+                            self.handle_cadet_suffix(e, suffix),
+                            suffix.lstrip('^')
+                        )
                     arg_lines.append(secondary_arg)
                 
         ret_args = ',\n\t\t'.join(arg_lines) 
@@ -695,7 +706,7 @@ class CWLFile:
             if 'secondaryFiles' in e:
                 for suffix in e['secondaryFiles']:
                     e_name = self.construct_input_name(e)
-                    e_name += "_SECONDARY_{}".format(suffix.lstrip('.').upper())
+                    e_name += "_SECONDARY_{}".format(suffix.replace('^', '').replace('.', '').upper())
                     ret_str += self.get_inp_type(e) + " {}\n\t\t".format(e_name)
 
         return ret_str
@@ -861,4 +872,3 @@ if __name__ == "__main__":
     # 2.) Concatenate workflow() for testing purpose
     if args.unit_test:
         cwl_file.print_template_standalone_text()
-
