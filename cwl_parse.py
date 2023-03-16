@@ -11,7 +11,7 @@ import os
 import re
 import subprocess
 import sys
-
+import yaml
 
 # Logging
 logger = logging.getLogger(__name__)
@@ -22,6 +22,11 @@ logger.setLevel(logging.DEBUG)
 # Argument parsing
 parser = ArgumentParser(description="Automated CWL <-> X Translator")
 parser.add_argument("cwl_source", help="Source CWL file")
+parser.add_argument(
+    "--import_yaml",
+    action="store_true",
+    help="Read YAML import_yaml",
+)
 parser.add_argument(
     "--inspect_docker",
     action="store_true",
@@ -34,13 +39,23 @@ parser.add_argument(
     help="Append a Workflow(...) call for stand-alone execution.",
 )
 parser.add_argument(
-    "--with_config",
+    "--with_tool_config",
     action="store_true",
     help="Generate <cwl_source>.nextflow.config for docker usage.",
 )
+parser.add_argument(
+    "--show_dag",
+    action="store_true",
+    help="Print the DAG of workflow.",
+)
+parser.add_argument(
+    "--with_wf_config",
+    action="store_true",
+    help="Generate <cwl_source>.nextflow.config with all tool configs associated with this cwl.",
+)
 parser.set_defaults(inspect_docker=False)
 parser.set_defaults(unit_test=False)
-parser.set_defaults(with_config=False)
+parser.set_defaults(with_tool_config=False)
 args = parser.parse_args()
 
 
@@ -60,6 +75,7 @@ class CWLFile:
         self.cwl_basecommand = None
         self.cwl_arguments = None
         self.cwl_stdout = None
+        self.param_dict = {}
 
         # Initialization methods
         self.get_cwl_object(cwl_path)
@@ -108,7 +124,7 @@ class CWLFile:
         # meanwhile Nextflow hardcoded shell entrypoint as /bin/bash.
         # This means we can't run files which use 'alpine:latest'.
         # For now we change it to 'ubuntu:latest'.
-        if "alpine" in self.container_uri:
+        if self.container_uri and "alpine" in self.container_uri:
             self.container_uri = "ubuntu:latest" 
 
     def get_name(self):
@@ -129,6 +145,32 @@ class CWLFile:
         else:
             assert self.cwl_object["class"] != "Workflow"
 
+    def show_dag(self):
+        step_dep = {}
+        print(self.cwl_object['steps'])
+        for step in self.cwl_object['steps']:
+            step_inp_dep = set()
+            step_out = set()
+            # print("Step {}, input: {}, output: {}".format(
+            #     step['id'], 
+            #     [(in_elem['id'], in_elem['source']) if 'source' in in_elem \
+            #      else (in_elem['id'], in_elem['default']) for in_elem in step['in']], 
+            #     [out_elem for out_elem in step['out']], 
+            #     ))
+            for in_elem in step['in']:
+                assert(type(in_elem) is dict)
+                if 'source' in in_elem:
+                    prev_step = in_elem['source'].split('/')[-2]
+                    step_inp_dep.add(prev_step)
+            step_dep[step['id']] = {
+                'in': list(step_inp_dep),
+                'run': step['run']
+            }
+        print(json.dumps(step_dep, indent=4))
+
+        return step_dep
+                
+
     def get_dependencies(self):
         if self.cwl_steps:
             self.cwl_dependencies = [e["run"] for e in self.cwl_steps]
@@ -137,7 +179,8 @@ class CWLFile:
         if self.cwl_steps:
             dep_aliases = {}
             for e in self.cwl_steps:
-                dep_aliases[e["run"]] = e["id"].replace('-', '_')
+                if type(e["run"]) is str:
+                    dep_aliases[e["run"]] = e["id"].replace('-', '_')
 
             self.cwl_dependency_aliases = dep_aliases
 
@@ -173,7 +216,8 @@ class CWLFile:
         print(outputs)
 
     def print_steps(self):
-        print(self.cwl_steps)
+        for e in self.cwl_steps:
+            print(e)
 
     def print_dependencies(self):
         for e in self.cwl_dependencies:
@@ -290,6 +334,12 @@ class CWLFile:
 
         return ret_declaration
 
+    def construct_workflow_all_params(self):
+        all_yaml_path = open("/home/martinlp/nextflow/wf-translation-suite/wfe-log-parser/all.yaml", 'r')
+
+        all_params_yaml = yaml.safe_load(all_yaml_path)
+        print(all_params_yaml)
+
     def construct_workflow_opt_declaration(self):
         # For each optional input, we check whether it is a file or value. If it
         # is a file, we assign it with "file('NO_FILE<#>')", where <#> E {0,N; n
@@ -357,7 +407,7 @@ class CWLFile:
             arg = self.construct_workflow_arg(e)
             arg_lines.append(arg)
             # If input does not request secondary files,
-            # we simply add it to the list of arguments.
+            # we simply a it to the list of arguments.
             # Else we construct new arguments which takes 
             # the input's value plus the secondary files suffix.
             # Note that these new arguments might not be included 
@@ -662,14 +712,14 @@ class CWLFile:
 
         print(result)
 
-    def print_template_standalone_text(self):
+    def print_template_standalone_text(self, alias: str = None):
         in_template = open(
             "{}/templates/template_standalone_test.txt".format(os.path.dirname(os.path.abspath(__file__))), "r"
         )
         template = Template(in_template.read())
 
         opt_declarations_str = self.construct_workflow_opt_declaration()
-        process_name_str = str.upper(self.cwl_name)
+        process_name_str = str.upper(alias) if alias else str.upper(self.cwl_name)
         process_args = self.construct_workflow_process_args()
 
         subs = {
@@ -688,8 +738,8 @@ class CWLFile:
             lib_alias = self.cwl_dependency_aliases[e]
             lib_source = e.replace(".cwl", ".nf")
             print(
-                "INCLUDE {{ {} as {} }} from {}".format(
-                    lib_name.upper(), lib_alias.upper(), lib_source
+                "include {{ {} as {} }} from \"{}\"".format(
+                    lib_name.upper().replace('.', '_'), lib_alias.upper(), lib_source
                 )
             )
 
@@ -825,7 +875,7 @@ class CWLFile:
         )
 
         if len(inp_list) > 1:
-            assert len(inp_list) == len(bindings)
+            # assert len(inp_list) == len(bindings)
             for e, b in zip(inp_list[1:], bindings[1:]):
                 ret_str += "\n\t\t" + inp_type + e + "({})".format(b)
 
@@ -835,7 +885,48 @@ class CWLFile:
         # self.print_header()
         self.print_body()
 
+    def print_recursive(self):
+        all_tools = []
+        for step in self.cwl_steps:
+            if 'run' in step:
+                if type(step['run']) is str:
+                    new_file_path = '/'.join(self.cwl_path.split('/')[:-1]) + '/' + step['run']
+                    all_tools.append(new_file_path)
+                    new_cwl = CWLFile(new_file_path)
+                    if new_cwl.cwl_class == "Workflow":
+                        new_cwl.print_recursive()
+                    else:
+                        alias_name = self.cwl_dependency_aliases[step['run']]
+                        new_cwl.print_template_standalone_text(alias=alias_name)
+                        new_cwl.print_template_config()
+                else:
+                    pass
 
+    def import_yaml(self, tool_name: str):
+        yaml_path = "/home/martinlp/nextflow/wf-translation-suite/wfe-log-parser/{}.yaml".format(tool_name)
+
+        yaml_file = open(yaml_path, 'r')
+        self.param_dict[tool_name] = (yaml.safe_load(yaml_file))
+
+    def construct_params_from_yaml(self, tool_names):
+        tool_names = [
+            "gdc_qc_tool.fastqc",
+            "gdc_qc_tool.samtools_flagstat",
+            "bam_readgroup_to_json",
+            "gdc_qc_tool.samtools_idxstat",
+            "gdc_qc_tool.readgroups",
+            "gdc_qc_tool.picard",
+            "picard_collectrnaseqmetrics",
+            "samtools_flagstat",
+            "samtools_idxstat",
+            "samtools_stats",
+            "gdc_qc_tool.samtools_stats",
+            "gdc_qc_tool.star"
+        ]
+        for tool_name in tool_names:
+            self.import_yaml(tool_name)
+
+        
 def convert_to_nextflow(cwl_path):
     # File Input - This is the only thing you will need to adjust or take in as
     # an input to your function: cwl_file =
@@ -858,17 +949,38 @@ if __name__ == "__main__":
 
     cwl_file = CWLFile(cwl_path)
     if cwl_file.cwl_class == "Workflow":
-        cwl_file.print_steps()
-        cwl_file.print_dependencies()
+        # cwl_file.print_steps()
+        # cwl_file.print_dependencies()
         cwl_file.print_template_header()
-        cwl_file.print_body()
+        # cwl_file.print_body()
+        cwl_file.print_recursive()
     else:
         cwl_file.print_body()
 
     # Here we add options to: 1.) Print out corresponding nextflow.config for
     # docker usage print(cwl_file.cwl_arguments)
-    if args.with_config:
+    if args.with_tool_config:
         cwl_file.print_template_config()
     # 2.) Concatenate workflow() for testing purpose
     if args.unit_test:
         cwl_file.print_template_standalone_text()
+    
+    if args.with_wf_config:
+        cwl_file.print_recursive()
+
+    if args.show_dag:
+        cwl_file.show_dag()
+        
+        # cwl_file.show_dag()
+        # from libs.CWLParser import CWLParser
+        # cwl_parser = CWLParser(cwl_path)
+        # cwl_parser.propagate()
+        # print(cwl_parser.topWorkflowObj.orderedSteps)
+        # print(cwl_parser.get_all_step_layers())
+        # print(cwl_parser.cache_step_dependency)
+        # print(json.dumps(cwl_file.cwl_object, indent=4))
+        # pass
+    
+    if args.import_yaml:
+        # cwl_file.construct_params_from_yaml()
+        cwl_file.construct_workflow_all_params()
