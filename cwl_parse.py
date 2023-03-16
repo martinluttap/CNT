@@ -549,10 +549,16 @@ class CWLFile:
                 # fine-tune the translation output. 
                 prefix_and_val = prefix + separator + self.translate_js(e['inputBinding']['valueFrom'])
             arguments.append(prefix_and_val)
-                
-        ret_script += " ".join(arguments)
+            
+
+        ret_script = " ".join(arguments) if len(arguments) > 1 else None
+        # If script is empty at this point, the CWL file must only contain an expression
+        if not ret_script:
+            assert('expression' in self.cwl_object.keys())
+
         if self.cwl_stdout:
             ret_script += self.construct_stdout()
+
 
         # If inspect_docker is enabled, we check whether the container has entry
         # point. If it does, we add '#!' and '#' at beginning and end of the
@@ -849,21 +855,22 @@ class CWLFile:
     def format_output_list(self, out_list: List) -> str:
         ret_str = ""
         for e in out_list:
-            cwl_glob =  e["outputBinding"]["glob"]
-            out_glob = None
-            if "$" in cwl_glob:
-                # This is most likely a javascript
-                out_glob = self.translate_js(cwl_glob)
-            else: 
-                out_glob = cwl_glob
-            ret_str += self.get_out_type(e) + ' "{}"\t, emit: {}\n\t\t'.format(
-               out_glob, e["id"].replace('-', '_')
-            )
-            if 'secondaryFiles' in e:
-                for suffix in e['secondaryFiles']:
-                    ret_str += '\t' + self.get_out_type(e) + ' "{}{}"\t, emit: {}_{}\n\t'.format(
-                        out_glob, suffix, e["id"].replace('-', '_'), suffix.lstrip('.')
-                    )
+            if "outputBinding" in e:
+                cwl_glob =  e["outputBinding"]["glob"]
+                out_glob = None
+                if "$" in cwl_glob:
+                    # This is most likely a javascript
+                    out_glob = self.translate_js(cwl_glob)
+                else: 
+                    out_glob = cwl_glob
+                ret_str += self.get_out_type(e) + ' "{}"\t, emit: {}\n\t\t'.format(
+                out_glob, e["id"].replace('-', '_')
+                )
+                if 'secondaryFiles' in e:
+                    for suffix in e['secondaryFiles']:
+                        ret_str += '\t' + self.get_out_type(e) + ' "{}{}"\t, emit: {}_{}\n\t'.format(
+                            out_glob, suffix, e["id"].replace('-', '_'), suffix.lstrip('.')
+                        )
 
         return ret_str
 
@@ -898,6 +905,7 @@ class CWLFile:
                     else:
                         alias_name = self.cwl_dependency_aliases[step['run']]
                         new_cwl.print_template_standalone_text(alias=alias_name)
+                        new_cwl.print_body()
                         new_cwl.print_template_config()
                 else:
                     pass
