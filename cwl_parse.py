@@ -845,9 +845,12 @@ class CWLFile:
         if self.cwl_class == "Workflow":
             out_type = ""
         else:  # CommandLineTool or ExpressionTool
-            if out["type"] == "File" or "*" in out["outputBinding"]["glob"]:
-                out_type = "path"
-            else:
+            if "outputBinding" in out:
+                if out["type"] == "File" or "*" in out["outputBinding"]["glob"]:
+                    out_type = "path"
+                else:
+                    out_type = "val"
+            else: 
                 out_type = "val"
 
         return out_type
@@ -871,6 +874,10 @@ class CWLFile:
                         ret_str += '\t' + self.get_out_type(e) + ' "{}{}"\t, emit: {}_{}\n\t'.format(
                             out_glob, suffix, e["id"].replace('-', '_'), suffix.lstrip('.')
                         )
+            else:
+                ret_str += self.get_out_type(e) + ' {}\t, emit: {}\n\t\t'.format(
+                    e["id"].replace('-', '_'), e["id"].replace('-', '_')
+                )
 
         return ret_str
 
