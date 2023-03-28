@@ -5,5 +5,8 @@
 *.sh
 .DS_Store
 
+libs/
+
 # Except templates
 !templates/*
+!libs/DAGDrawer.py
