@@ -1,0 +1,8 @@
+workflow $workflow_id {
+    take:
+        $take
+    main:
+        $main
+    emit:
+        $emit
+}
