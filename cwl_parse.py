@@ -337,14 +337,19 @@ class CWLFile:
                 left_space_pad = (' ' * (num_space_pad - len(inp['id'])))
 
                 # For default value, default assignment by caller takes precedence over callee
-                ## Here we swap inp['default'] from callee with caller's, if it exists
+                caller = None
                 for step in self.cwl_steps:
                     for caller_inp in step['in']:
                         if (caller_inp['id'] == inp['id']) and ('default' in caller_inp):
-                            inp['default'] = caller_inp['default']
+                            caller = caller_inp
 
                 # Now we can construct the arguments according to whether they are optional and/or have default values. 
-                value_default = "Channel.{}".format("of(\"{}\")".format(inp['default']) if 'default' in inp else "empty()")
+                value_default = None
+                if caller:
+                    assert('default' in caller)
+                    value_default = "Channel.{}".format("of(\"{}\")".format(caller['default']))
+                else:
+                    value_default = "Channel.{}".format("of(\"{}\")".format(inp['default']) if 'default' in inp else "empty()")
                 if self.check_is_file(inp) or self.check_is_dir(inp):
                     value_source = " Channel.fromPath(params['{}'])".format(inp['id'])
                     if self.check_is_optional(inp):
@@ -371,8 +376,7 @@ class CWLFile:
             alias_name = self.cwl_path.split('/')[-1][:-len(".cwl")]
             ret_str += self.print_template_workflow(alias_name=str.upper(alias_name))
         else:
-            if not isinstance(self, CWLStep):
-                ret_str += self.print_template_process()
+            ret_str += self.print_template_process()
 
         return ret_str
 
@@ -451,8 +455,8 @@ class CWLFile:
             if "inputBinding" in e:
                 if "prefix" in e["inputBinding"]:
                     prefix = e["inputBinding"]["prefix"]
-                if "separator" in e["inputBinding"]:
-                    is_separator = e['inputBinding']['separator']
+                if "separate" in e["inputBinding"]:
+                    is_separator = e['inputBinding']['separate']
                     separator = " " if is_separator else ""
 
             # An input can be optional, has default value, or both. 
@@ -484,10 +488,10 @@ class CWLFile:
                     default_val = e['default'] 
                     opt_name = "with_def_" + opt_name
                 else:
-                    default_val = ""
+                    default_val = "\"\""
                 
                 line = 'def {} = {} != {} ? "{}" : {}'.format(
-                    opt_name, val_to_check, val_against, opt_declaration_val, str(default_val)
+                    opt_name, val_to_check, val_against, opt_declaration_val, ("\"{}\"".format(str(default_val)) if (default_val != "\"\"") else default_val)
                 )
                 declaration_lines.append(line)
             else:
@@ -680,7 +684,8 @@ class CWLFile:
                     if "null" not in e["type"]:
                         # Here we handle an array
                         if 'is_array' in e:
-                            prefix = e['type']['inputBinding']['prefix']
+                            if 'inputBinding' in e['type']:
+                                prefix = e['type']['inputBinding']['prefix']
                         elif "prefix" in e["inputBinding"]:
                             prefix = e["inputBinding"]["prefix"] 
                         arg_val = "${{{}}}".format(e["id"].replace('-', '_'))
@@ -726,11 +731,12 @@ class CWLFile:
             process = subprocess.run(bash_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             output = r"{}".format(process.stdout.decode('utf8'))
             inspect_result = json.loads(output)
-            assert(len(inspect_result) == 1) # It doesn't make sense to have more than one
-            assert("ContainerConfig" in inspect_result[0])
-            entry_point = inspect_result[0]['ContainerConfig']['Entrypoint'] 
-            if entry_point:
-                ret_script = "#!" + ret_script
+            if (len(inspect_result)):
+                assert(len(inspect_result) == 1) # It doesn't make sense to have more than one
+                assert("ContainerConfig" in inspect_result[0])
+                # entry_point = inspect_result[0]['ContainerConfig']['Entrypoint'] 
+                # if entry_point:
+                ret_script = ("#!" + ret_script) if ret_script else "#!"
                 ret_script = ret_script + " #"
 
         return ret_script

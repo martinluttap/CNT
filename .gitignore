@@ -3,6 +3,7 @@
 *.txt
 *.json
 *.sh
+*.csv
 .DS_Store
 
 libs/
