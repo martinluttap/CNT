@@ -62,6 +62,14 @@ parser.add_argument(
     action="store_true",
     help="Generate <cwl_source>.nextflow.config with all tool configs associated with this cwl.",
 )
+parser.add_argument(
+    "--export_to_dir",
+    nargs=2,
+    metavar = ('SOURCE_DIR', 'TARGET_DIR'),
+    action="store",
+    help="Export per-file translation to designated TARGET_DIR following SOURCE_DIR's structure.",
+)
+
 parser.set_defaults(inspect_docker=False)
 parser.set_defaults(unit_test=False)
 parser.set_defaults(with_tool_config=False)
@@ -161,7 +169,6 @@ class CWLFile:
 
     def get_dag(self):
         cwl_object_short_id = self.cwl_object['id'].split('#')[-1]
-        # print(json.dumps(self.cwl_object['steps'], indent=4))
         for step in self.cwl_object['steps']:
             step_inp_dep = set()
             in_emit_dict = {}
@@ -269,7 +276,7 @@ class CWLFile:
     def get_arguments(self):
         if "arguments" in self.cwl_object:
             self.cwl_arguments = self.cwl_object["arguments"]
-    
+
     def get_stdout(self):
         if "stdout" in self.cwl_object:
             self.cwl_stdout = self.cwl_object["stdout"]
@@ -301,12 +308,73 @@ class CWLFile:
         for e in self.cwl_dependencies:
             print(e)
 
+    def print_params_declaration(self, num_space_pad: int = 32):
+        # Take from step's params only those which are used as arguments
+        # (i.e. workflow/process might use variables from take, 
+        # thus a lot of cwl_inputs are not taken from params).
+        declaration_lines = ""
+        if self.cwl_class == "Workflow":
+            # Here we go over all steps and create a unique set from their inputs.  
+            input_set = list()
+            input_sources_dict = nx.get_node_attributes(self.dag, "input_sources")
+            for _, step_file in self.step_files.items():
+                for inp in step_file.cwl_inputs:
+                    short_dep_alias_dict = {k.split('/')[-1]: v for k, v in self.cwl_dependency_aliases.items() }
+                    short_fn = step_file.get_short_filename()
+                    if short_fn in short_dep_alias_dict:
+                        lib_alias = short_dep_alias_dict[step_file.get_short_filename()]
+                        # As mentioned, we will only take input if it is used as argument
+                        if (inp not in input_set) and (inp['id'] not in input_sources_dict[lib_alias]['in_sink_dict']):
+                            input_set.append(inp)
+            input_set = sorted(input_set, key=lambda x: x['id'])
+
+            # Here we embed the Nextflow style declaration.
+            # Adapted from nf-core/sarek
+            declaration_lines = ""
+            nofile_count = 0
+            for inp in input_set:
+                value_source = None
+                left_space_pad = (' ' * (num_space_pad - len(inp['id'])))
+
+                # For default value, default assignment by caller takes precedence over callee
+                ## Here we swap inp['default'] from callee with caller's, if it exists
+                for step in self.cwl_steps:
+                    for caller_inp in step['in']:
+                        if (caller_inp['id'] == inp['id']) and ('default' in caller_inp):
+                            inp['default'] = caller_inp['default']
+
+                # Now we can construct the arguments according to whether they are optional and/or have default values. 
+                value_default = "Channel.{}".format("of(\"{}\")".format(inp['default']) if 'default' in inp else "empty()")
+                if self.check_is_file(inp) or self.check_is_dir(inp):
+                    value_source = " Channel.fromPath(params['{}'])".format(inp['id'])
+                    if self.check_is_optional(inp):
+                        value_default = "file(\"NO_FILE{}\")".format(nofile_count + 1)
+                        nofile_count += 1
+                    line = "{} {}= params['{}'] {} ? {} : {}\n".format(
+                        inp['id'], left_space_pad, inp['id'], left_space_pad, value_source, value_default)
+                else:
+                    if self.check_is_optional(inp):
+                        value_default = "\"\""
+                    line = "{} {}= params['{}'] {} ?: {}\n".format(
+                        inp['id'], left_space_pad, inp['id'], left_space_pad, value_default)
+                
+                declaration_lines += line
+            
+            declaration_lines += '\n'
+            
+        return declaration_lines
+
+
     def print_body(self):
+        ret_str = ""
         if self.cwl_class == "Workflow":
             alias_name = self.cwl_path.split('/')[-1][:-len(".cwl")]
-            self.print_template_workflow(alias_name=str.upper(alias_name))
-        # else:
-        #     self.print_template_process()
+            ret_str += self.print_template_workflow(alias_name=str.upper(alias_name))
+        else:
+            if not isinstance(self, CWLStep):
+                ret_str += self.print_template_process()
+
+        return ret_str
 
     def print_template_config(self):
         file_dir = os.path.dirname(os.path.realpath(__file__))
@@ -335,7 +403,7 @@ class CWLFile:
 
         pr_output_list = [e for e in self.cwl_outputs]
 
-        opt_declaration = self.construct_process_opt_declaration()
+        opt_declaration = self.construct_process_opt_withdef_declaration()
         script = self.construct_script()
 
         pr_input = self.format_input_list(pr_input_list)
@@ -362,9 +430,9 @@ class CWLFile:
 
         result = template.substitute(subs)
 
-        print(result)
+        return result
 
-    def construct_process_opt_declaration(self):
+    def construct_process_opt_withdef_declaration(self):
         # We assume the value of all optional inputs at this point are "". The
         # input YAML might give 'null' as value for optional inputs, so this
         # function expect the null --> "" conversion was done elsewhere before.
@@ -386,17 +454,24 @@ class CWLFile:
                 if "separator" in e["inputBinding"]:
                     is_separator = e['inputBinding']['separator']
                     separator = " " if is_separator else ""
+
+            # An input can be optional, has default value, or both. 
+            # We handle it as follows:
+            # 1.) If optional --> has default value ? if yes, use default value, else don't pass the parameter
+            # 2.) If not optional --> has default value ? If yes, use default value, else
+
             if self.check_is_optional(e):
                 opt_name = "opt_" + e["id"].replace('-', '_')
                 js_method_call = ".join(' ')" if self.check_is_array_of_items(e) else ""
                 opt_declaration_val = "{}{}${{{}{}}}".format(prefix, separator, opt_name, js_method_call)
-
+    
                 # If input_type is path, we check its name against NO_FILE else
                 # if it's val we simply check whether it's empty. Apparently
                 # Nextflow complains if >1 optional input use file("NO_FILE"),
                 # so we number them.
                 val_to_check = None
                 val_against = None
+                default_val = None
                 if self.check_is_file(e) or self.check_is_dir(e):
                     count_opt_input_file += 1
                     val_to_check = opt_name + ".name"
@@ -404,11 +479,22 @@ class CWLFile:
                 else:
                     val_to_check = opt_name
                     val_against = '""'
-                line = 'def {} = {} != {} ? "{}" : ""'.format(
-                    opt_name, val_to_check, val_against, opt_declaration_val
+
+                if self.check_has_def_value(e):
+                    default_val = e['default'] 
+                    opt_name = "with_def_" + opt_name
+                else:
+                    default_val = ""
+                
+                line = 'def {} = {} != {} ? "{}" : {}'.format(
+                    opt_name, val_to_check, val_against, opt_declaration_val, str(default_val)
                 )
                 declaration_lines.append(line)
-
+            else:
+                if self.check_has_def_value(e):
+                    line = '{} = {}.ifEmpty("{}").first()'.format(e['id'], e['id'], str(e['default']))
+                    declaration_lines.append(line)
+    
         ret_declaration = "\n\t\t".join(declaration_lines)
 
         return ret_declaration
@@ -417,7 +503,8 @@ class CWLFile:
         all_yaml_path = open("/home/martinlp/nextflow/wf-translation-suite/wfe-log-parser/all.yaml", 'r')
 
         all_params_yaml = yaml.safe_load(all_yaml_path)
-        print(all_params_yaml)
+
+        return str(all_params_yaml)
 
     def construct_workflow_opt_declaration(self):
         # For each optional input, we check whether it is a file or value. If it
@@ -458,16 +545,7 @@ class CWLFile:
         return ret_declaration
 
     def construct_workflow_arg(self, input_elem):
-        arg_name = None
-        if self.check_is_optional(input_elem):
-            arg_name = "opt_" + input_elem['id']
-        else:
-            arg_name = "params['{}']".format(input_elem['id'])  + (
-                            ".path" if (self.check_is_file(input_elem)  or \
-                                        self.check_is_dir(input_elem))
-                                    else ""
-                        )
-        return arg_name
+        return input_elem['id']
 
     def handle_cadet_suffix(self, input_elem, suffix):
         ret = ""
@@ -798,8 +876,7 @@ class CWLFile:
         wf_take_list = [e["id"].replace('-', '_') for e in self.cwl_inputs]
 
         wf_emit_list = [e["id"].replace('-', '_') for e in self.cwl_outputs]
-
-        wf_take = self.workflow_format_list(wf_take_list)
+        wf_take = self.workflow_format_take_list(wf_take_list)
 
         # We order process calls based on Networkx's topological generations
         wf_main = ""
@@ -814,7 +891,7 @@ class CWLFile:
                     wf_main_entry = self.add_tabs(step_file.print_template_wf_body(step_alias), num_tabs=2)
                     wf_main += "{}".format(wf_main_entry)
     
-        wf_emit = self.workflow_format_list(wf_emit_list)
+        wf_emit = self.workflow_format_emit_list(wf_emit_list)
         subs = {
             "workflow_id": alias_name if alias_name else str.upper(self.cwl_name),
             "take": wf_take,
@@ -824,7 +901,7 @@ class CWLFile:
 
         result = template.substitute(subs)
 
-        print(result)
+        return result
 
     def print_template_standalone_text(self, alias: str = None):
         in_template = open(
@@ -852,26 +929,30 @@ class CWLFile:
     def print_template_wf_body(self, alias_name: str = None):
         wf_body = self.construct_workflow_process_args()
         step_alias_name = str.upper(alias_name) if alias_name else str.upper(self.cwl_name)
-
         ret_str = "{}(\n\t{}\n)\n".format(step_alias_name, wf_body)
 
         return ret_str
 
 
     def print_template_header(self):
+        ret_str = ""
         if self.cwl_class == "Workflow":
             for e in self.cwl_dependencies:
                 if not type(e) is dict:
                     lib_name = e.strip().split("/")[-1][:-len(".cwl")]
                     lib_alias = self.cwl_dependency_aliases[e]
                     lib_source = e.replace(".cwl", ".nf")
-                    print(
-                        "include {{ {} as {} }} from \"{}\"".format(
+                    if not lib_source.startswith('.'):
+                        lib_source = "./" + lib_source
+                    line = "include {{ {} as {} }} from \"{}\"".format(
                             lib_name.upper().replace('.', '_'), lib_alias.upper(), lib_source
                         )
-                    )
+                    ret_str += (line + '\n')
                 else:
-                    print(e)
+                    ret_str += (str(e) + '\n')
+            ret_str += '\n'
+
+        return ret_str
 
     def construct_input_name(self, input_val):
         return input_val["id"].replace('-', '_') if "null" not in input_val["type"] \
@@ -902,6 +983,13 @@ class CWLFile:
         
         return is_array_of_items
                 
+    def check_has_def_value(self, inp):
+        has_def_value = False
+        if "default" in inp:
+            has_def_value = True
+
+        return has_def_value
+            
     def check_is_optional(self, inp):
         is_optional = False
         if "null" in inp['type']:
@@ -995,7 +1083,7 @@ class CWLFile:
                 )
                 if 'secondaryFiles' in e:
                     for suffix in e['secondaryFiles']:
-                        ret_str += '\t' + self.get_out_type(e) + ' "{}{}"\t, emit: {}_{}\n\t'.format(
+                        ret_str += 'c\t' + self.get_out_type(e) + ' "{}{}"\t, emit: {}_{}\n\t'.format(
                             out_glob, suffix, e["id"].replace('-', '_'), suffix.lstrip('.')
                         )
             else:
@@ -1005,7 +1093,23 @@ class CWLFile:
 
         return ret_str
 
-    def workflow_format_list(self, inp_list: List) -> str:
+    def workflow_format_emit_list(self, emit_list: List) -> str:
+        ret_str = ""
+        for inp in emit_list:
+            # Find output source
+            out_source = None
+            for out in self.cwl_outputs:
+                if out['id'] == inp:
+                    prev_step = out['outputSource'].split('/')[-2]
+                    emit = out['outputSource'].split('/')[-1]
+                    out_source = "{}.out.{}".format(str.upper(prev_step), emit)
+
+            assert(out_source)
+            ret_str += "\n\t\t" + inp + " = {}".format(out_source)
+
+        return ret_str
+
+    def workflow_format_take_list(self, inp_list: List) -> str:
         ret_str = ""
         for inp in inp_list:
             ret_str += "\n\t\t" + inp
@@ -1025,16 +1129,11 @@ class CWLFile:
                     # all_step_file.append(new_file_path)
                     new_cwl = CWLStep(new_file_path, self)
                     if new_cwl.cwl_class == "Workflow":
-                        print()
-                        print("Adding workflow {}".format(new_cwl.cwl_id))
                         all_step_file[step['id']] = new_cwl
                         all_step_file.update(new_cwl.collect_step_file_recursive())
-                        print("Done workflow {}".format(new_cwl.cwl_id))
-                        print()
                         # new_cwl.collect_step_file_recursive()
                     else:
                         all_step_file[step['id']] = new_cwl
-                        print("Added {}".format(new_cwl.cwl_id))
                         alias_name = self.cwl_dependency_aliases[step['run']]
                         # new_cwl.print_template_standalone_text(alias=alias_name)
                         # new_cwl.print_body()
@@ -1070,27 +1169,89 @@ class CWLFile:
         for tool_name in tool_names:
             self.import_yaml(tool_name)
 
+    def export_to_file(self, export_path: str = None):
+        self_short_fn = self.get_short_filename()[:-len('.cwl')] + ".nf"
+        dirs = None
+        if not export_path:
+            dirs = "./" 
+        else:
+            # If export_path is a file (i.e. has '.' after last '/'), we put in
+            # its parent directory. Else we use the full export_path.
+            if '.' in export_path.split('/')[-1]:
+                dirs = "./{}/".format('/'.join(export_path.split('/')[:-1]))
+            else:
+                dirs = "./{}/".format(export_path)
+        Path(dirs).mkdir(parents=True, exist_ok=True)
+
+        # Now we can write the file to target directory. If export_path ends
+        # with '.nf', we consider the last part after '/' to be filename. Else
+        # we consider the whole path to be directories.
+        file_path = self_short_fn
+        if export_path and export_path.endswith('.nf'): 
+            file_path = export_path.split('/')[-1]
+        outfile = open(
+            "{}{}".format(dirs, file_path), 
+        'w')
+        print("Exporting {} to {}".format(self_short_fn, (dirs + file_path)))
+        file_output = ""
+        file_output += self.print_template_header()
+        file_output += self.print_params_declaration()
+        file_output += self.print_body()
+            
+        outfile.write(file_output)
+
+    def export_to_dir(self, source_dir: str, target_dir: str = "./"):
+        # This function assume user might give a single file not located in its
+        # workflow folder as cwl_path (e.g. copy a single file and put it in
+        # current dir). Thus, we need another source of information to infer the
+        # structure of workflow folder. In this case we request source_dir.
+
+        ## First we get all the folders we need to create in target_dir. 
+        dirs_list = []
+        short_source_dir = source_dir.split('/')[-1]
+        for root, dirs_walked, files_walked in os.walk(source_dir):
+            # Say root is : 'abc/def/source_dir/ghi/jkl'. We take 'source_dir/ghi/jkl'
+            source_until_deepest = '/'.join(root.split('/')[root.split('/').index(short_source_dir):])
+            dirs_list.extend(["{}/{}".format(source_until_deepest, d) for d in dirs_walked])
+
+        ## Now we infer the correct location for our files based on source file's
+        ## dependency. 
+        target_path = None
+        sanity_check_dirs = set()
+        for dep in self.cwl_dependencies:
+            if (not dep[:2] == ".."):
+                dir_same_level = dep.split('/')[0]
+            sanity_check_dirs.add(dir_same_level)
+            if not target_path:
+                for dir in dirs_list:
+                    if dir_same_level == dir.split('/')[-1]:
+                        target_path = '/'.join(dir.split('/')[:-1])
+        for dir in set(sanity_check_dirs):
+            assert("{}/{}".format(target_path, dir) in dirs_list)
         
-def convert_to_nextflow(cwl_path):
-    # File Input - This is the only thing you will need to adjust or take in as
-    # an input to your function: cwl_file =
-    # Path("./gdc_dnaseq.bamfastq_align.workflow.cwl")  # or a plain string
-    # works as well
-    cwl_file = Path(cwl_path)
+        # Once we found the target_path, we can start translating the target
+        # file and all its steps.
+        for d in dirs_list:
+            Path("{}/{}".format(target_dir, d)).mkdir(parents=True, exist_ok=True)
+        self.export_to_file("{}/{}".format(target_dir, target_path))
+        for _, step_file in self.step_files.items():
+            # For each step file's cwl_path, we take substring starting with
+            # target_path. Given that substring, export_to_file will handle
+            # folder creation correctly. 
+            index_in_step_path = step_file.cwl_path.split('/').index(target_path.split('/')[0]) 
+            step_target_folder = '/'.join(step_file.cwl_path.split('/')[index_in_step_path:-1])
+            step_export_path = "{}/{}".format(target_dir, step_target_folder)
 
-    # Import CWL Object
-    cwl_obj = load_document_by_uri(cwl_file)
-
-    # Export CWL Object into a built-in typed object
-    saved_obj = save(cwl_obj)
-
-    print(str_obj)
-
-
+            step_file.export_to_file(step_export_path)
 class CWLStep(CWLFile):
     def __init__(self, cwl_path, parent: CWLFile) -> None:
         super().__init__(cwl_path)
         self.parent = parent
+
+    def get_input_source_sink_dict(self):
+        short_fn = self.get_short_filename()
+        alias = self.parent.find_short_filename_alias(short_fn)
+        return nx.get_node_attributes(self.parent.dag, "input_sources")[alias]['in_sink_dict']
 
     def get_source_sink_info(self, input_elem):
         # Here we get the following info for ourselves:
@@ -1098,9 +1259,7 @@ class CWLStep(CWLFile):
         # 2.) Our input as sink
 
         # First find ourselves among parent's steps
-        short_fn = self.get_short_filename()
-        alias = self.parent.find_short_filename_alias(short_fn)
-        source_sink_dict = nx.get_node_attributes(self.parent.dag, "input_sources")[alias]['in_sink_dict']
+        source_sink_dict = self.get_input_source_sink_dict()
 
         # It is possible that the dict does not contain input_elem 
         # (e.g. input_elem has a default value)
@@ -1119,7 +1278,7 @@ class CWLStep(CWLFile):
                 return None
         else:
             if (emit_source and step_source):
-                return "{}.out.{}".format(step_source, emit_source)
+                return "{}.out.{}".format(str.upper(step_source), emit_source)
             else:
                 assert((not emit_source) and (not step_source))
                 return None
@@ -1133,53 +1292,52 @@ class CWLStep(CWLFile):
         # it must be one of (or a combination of) optional, has default value, or 
         # comes from the param file.
         if elem_parent_perspective:
-            # print("ELEM PARENT", elem_parent_perspective)
             arg_name = elem_parent_perspective
         else:
-            if self.check_is_optional(input_elem):
-                arg_name = "opt_" + input_elem['id']
-            else:
-                arg_name = "params['{}']".format(input_elem['id'])  + (
-                                ".path" if (self.check_is_file(input_elem)  or \
-                                            self.check_is_dir(input_elem))
-                                        else ""
-                            )   
+            arg_name = input_elem['id']
+            
         return arg_name
 
 
 if __name__ == "__main__":
-    # print(sys.argv[1])
     cwl_path = sys.argv[1]
 
     cwl_file = CWLFile(cwl_path)
     if cwl_file.cwl_class == "Workflow":
-        # cwl_file.print_steps()
-        # cwl_file.print_dependencies()
-        cwl_file.print_template_header()
-        # cwl_file.print_body()
         all_step_file = cwl_file.collect_step_file_recursive()
         for step_id, step_file in all_step_file.items():
-            # alias_name =step.cwl_dependency_aliases[step['run']]
             step_file.print_template_header()
-            step_file.print_body()               
+            step_file.print_params_declaration()
+            step_file.print_body()
+
+        cwl_file.print_template_header()
+        cwl_file.print_params_declaration()
+        cwl_file.print_body()
     else:
         cwl_file.print_body()
 
-    # Here we add options to: 1.) Print out corresponding nextflow.config for
-    # docker usage print(cwl_file.cwl_arguments)
     if args.with_tool_config:
         cwl_file.print_template_config()
-    # 2.) Concatenate workflow() for testing purpose
+
     if args.unit_test:
         cwl_file.print_template_standalone_text()
     
     if args.with_wf_config:
-        cwl_file.collect_step_file_recursive()
+        all_step_file = cwl_file.collect_step_file_recursive()
+        for step_id, step_file in all_step_file.items():
+            if (step_file.cwl_class != "Workflow") and step_file.container_uri:
+                print("withName:{}{{\n\tcontainer = '{}'\n}}".format(
+                    str.upper(step_file.get_short_filename()[:-len('.cwl')]), 
+                              step_file.container_uri)
+                )
 
     if args.show_dag:
         cwl_file.show_dag()
-        # print(json.dumps(cwl_file.cwl_object, indent=4))
             
     if args.import_yaml:
-        # cwl_file.construct_params_from_yaml()
         cwl_file.construct_workflow_all_params()
+
+    if args.export_to_dir:
+        # cwl_file.export_to_file(args.export_to_dir)
+        source_dir, target_dir = args.export_to_dir
+        cwl_file.export_to_dir(source_dir, target_dir)
