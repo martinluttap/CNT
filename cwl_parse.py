@@ -58,6 +58,11 @@ parser.add_argument(
     help="Print the DAG of workflow.",
 )
 parser.add_argument(
+    "--single_file",
+    action="store_true",
+    help="Output translation only for the given file",
+)
+parser.add_argument(
     "--with_wf_config",
     action="store_true",
     help="Generate <cwl_source>.nextflow.config with all tool configs associated with this cwl.",
@@ -1321,6 +1326,15 @@ if __name__ == "__main__":
         cwl_file.print_body()
     else:
         cwl_file.print_body()
+
+    if args.single_file:
+        if cwl_file.cwl_class == "Workflow":
+            print(cwl_file.print_template_header())
+            print(cwl_file.print_params_declaration())
+            print(cwl_file.print_body())
+        else:
+            print(cwl_file.print_body())
+
 
     if args.with_tool_config:
         cwl_file.print_template_config()
