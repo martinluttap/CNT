@@ -31,6 +31,7 @@ logger.setLevel(logging.DEBUG)
 # Argument parsing
 parser = ArgumentParser(description="Automated CWL <-> X Translator")
 parser.add_argument("cwl_source", help="Source CWL file")
+
 parser.add_argument(
     "--import_yaml",
     action="store_true",
@@ -69,8 +70,8 @@ parser.add_argument(
 )
 parser.add_argument(
     "--export_to_dir",
-    nargs=2,
-    metavar = ('SOURCE_DIR', 'TARGET_DIR'),
+    nargs=1,
+    metavar = ('TARGET_DIR'),
     action="store",
     help="Export per-file translation to designated TARGET_DIR following SOURCE_DIR's structure.",
 )
@@ -118,6 +119,26 @@ class CWLFile:
             self.dag = nx.DiGraph()
             self.get_dag()
         # self.get_id()
+
+    def update_self(self):
+        self.get_cwl_object(cwl_path)
+        self.get_id()
+        self.get_container_uri()
+        self.get_name()
+        self.get_class()
+        self.get_inputs()
+        self.get_outputs()
+        self.get_steps()
+        self.get_dependencies()
+        self.get_dependency_aliases()
+        self.get_basecommand()
+        self.get_arguments()
+        self.get_stdout()
+        if self.cwl_class == "Workflow":
+            self.dag = nx.DiGraph()
+            self.get_dag()
+        # for step_id, step_file in self.step_files.items():
+        #     step_file.update_self()
 
     def get_cwl_object(self, cwl_path):
         # File Input - This is the only thing you will need to adjust or take in
@@ -270,9 +291,31 @@ class CWLFile:
             dep_aliases = {}
             for e in self.cwl_steps:
                 if type(e["run"]) is str:
-                    dep_aliases[e["run"]] = e["id"].replace('-', '_')
+                    assert(e["id"].replace('-', '_') not in dep_aliases)
+                    dep_aliases[e["id"].replace('-', '_')] = e["run"] 
+                    # If the step is a workflow itself, we traverse its
+                    # dependencies in a DFS manner, then add those dependencies
+                    # to the dictionary we have built
+                    if e['id'] in self.step_files:                    
+                        if self.step_files[e['id']].cwl_class == 'Workflow':
+                            step_dep_aliases = self.step_files[e['id']].get_dependency_aliases()
+                            for k, v in step_dep_aliases.items():
+                                if (k in dep_aliases) and (dep_aliases[k] != v):
+                                    raise KeyError("The key should not be here!")
+                            dep_aliases.update(step_dep_aliases)
+
+            # Here we check whether the dependency from step file 
+            # has a same key as the one existing in self.cwl_dependency_aliases
+            for k, v in dep_aliases.items():
+                if self.cwl_dependency_aliases:
+                    if k in self.cwl_dependency_aliases:
+                        assert(self.cwl_dependency_aliases[k] == v)
+                    # assert(k not in self.cwl_dependency_aliases) # conflict here
+                    
 
             self.cwl_dependency_aliases = dep_aliases
+
+            return dep_aliases
 
     def get_basecommand(self):
         if "baseCommand" in self.cwl_object:
@@ -324,7 +367,7 @@ class CWLFile:
             input_sources_dict = nx.get_node_attributes(self.dag, "input_sources")
             for _, step_file in self.step_files.items():
                 for inp in step_file.cwl_inputs:
-                    short_dep_alias_dict = {k.split('/')[-1]: v for k, v in self.cwl_dependency_aliases.items() }
+                    short_dep_alias_dict = {k: v.split('/')[-1] for k, v in self.cwl_dependency_aliases.items() }
                     short_fn = step_file.get_short_filename()
                     if short_fn in short_dep_alias_dict:
                         lib_alias = short_dep_alias_dict[step_file.get_short_filename()]
@@ -375,13 +418,18 @@ class CWLFile:
         return declaration_lines
 
 
-    def print_body(self):
+    def print_body(self, out_path: str = None):
         ret_str = ""
         if self.cwl_class == "Workflow":
             alias_name = self.cwl_path.split('/')[-1][:-len(".cwl")]
-            ret_str += self.print_template_workflow(alias_name=str.upper(alias_name))
+            # ret_str += self.print_template_workflow(alias_name=str.upper(alias_name))
+            ret_str += self.print_template_workflow_recursive(alias_name=str.upper(alias_name))
         else:
             ret_str += self.print_template_process()
+
+        if out_path:
+            with open(out_path, 'w') as out_file:
+                out_file.write(ret_str)
 
         return ret_str
 
@@ -736,6 +784,7 @@ class CWLFile:
             process = subprocess.run(bash_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             output = r"{}".format(process.stdout.decode('utf8'))
             inspect_result = json.loads(output)
+            print("Inspected docker {}, result {}".format(image_url, inspect_result))
             if (len(inspect_result)):
                 assert(len(inspect_result) == 1) # It doesn't make sense to have more than one
                 assert("ContainerConfig" in inspect_result[0])
@@ -866,9 +915,9 @@ class CWLFile:
     def find_short_filename_alias(self, short_filename):
         # short_filename: xyz.cwl (UNIX's basename, retaining extension)
         alias_name = None
-        for rel_path, alias in self.cwl_dependency_aliases.items():
+        for alias, rel_path in self.cwl_dependency_aliases.items():
             rel_path_fn = rel_path.split('/')[-1]
-            if rel_path_fn == short_filename:
+            if (rel_path_fn == short_filename) and (alias in self.dag.nodes):
                 alias_name = alias
         
         assert(alias_name)
@@ -876,6 +925,51 @@ class CWLFile:
     
     def get_short_filename(self):
         return self.cwl_id.split('/')[-1].split('#')[0]
+
+    def print_template_workflow_recursive(self, alias_name: str = ""):
+
+        in_template = open(
+            "{}/templates/template_workflow.txt".format(os.getcwd()), "r"
+        )
+        template = Template(in_template.read())
+
+        wf_take_list = [e["id"].replace('-', '_') for e in self.cwl_inputs]
+
+        wf_emit_list = [e["id"].replace('-', '_') for e in self.cwl_outputs]
+        wf_take = self.workflow_format_take_list(wf_take_list)
+
+        # We order process calls based on Networkx's topological generations
+        wf_main = ""
+        for idx_generation, generation in enumerate(list(nx.topological_generations(self.dag))):
+            for idx_node, node in enumerate(generation):
+                if node in self.step_files: # not an input / output
+                    # We make things recursive here
+                    step_file = self.step_files[node]
+                    # Here we find the alias name
+                    step_short_fn = step_file.get_short_filename()
+                    step_alias = self.find_short_filename_alias(step_short_fn)
+
+                    wf_main_entry = ""
+                    if step_file.cwl_class == 'Workflow':
+                        wf_main_entry = step_file.print_template_workflow_recursive(step_alias)
+                        wf_main += "{}".format(wf_main_entry)
+                    else:
+                        wf_main_entry = self.add_tabs(step_file.print_template_wf_body(step_alias), num_tabs=2)
+                        wf_main += "{}".format(wf_main_entry)
+    
+        wf_emit = self.workflow_format_emit_list(wf_emit_list)
+        subs = {
+            "workflow_id": alias_name if alias_name else str.upper(self.cwl_name),
+            "take": wf_take,
+            "main": wf_main,
+            "emit": wf_emit,
+        }
+
+        result = template.substitute(subs)
+
+        return result
+
+
 
     def print_template_workflow(self, alias_name: str = ""):
 
@@ -899,8 +993,16 @@ class CWLFile:
                     step_short_fn = step_file.get_short_filename()
                     step_alias = self.find_short_filename_alias(step_short_fn)
 
-                    wf_main_entry = self.add_tabs(step_file.print_template_wf_body(step_alias), num_tabs=2)
-                    wf_main += "{}".format(wf_main_entry)
+                    print("Workflow {} generation {} step {}".format(
+                        self.cwl_name, generation, step_alias
+                    ))
+
+                    if step_file.cwl_class == 'Workflow':
+                        wf_main_entry = step_file.print_template_workflow(step_alias)
+                        wf_main += "{}".format(wf_main_entry)
+                    else:
+                        wf_main_entry = self.add_tabs(step_file.print_template_wf_body(step_alias), num_tabs=2)
+                        wf_main += "{}".format(wf_main_entry)
     
         wf_emit = self.workflow_format_emit_list(wf_emit_list)
         subs = {
@@ -951,7 +1053,11 @@ class CWLFile:
             for e in self.cwl_dependencies:
                 if not type(e) is dict:
                     lib_name = e.strip().split("/")[-1][:-len(".cwl")]
-                    lib_alias = self.cwl_dependency_aliases[e]
+                    lib_alias = None
+                    for k, v in self.cwl_dependency_aliases.items():
+                        if e == v:
+                            lib_alias = k #self.cwl_dependency_aliases[e]
+                    assert(lib_alias)
                     lib_source = e.replace(".cwl", ".nf")
                     if not lib_source.startswith('.'):
                         lib_source = "./" + lib_source
@@ -1145,7 +1251,11 @@ class CWLFile:
                         # new_cwl.collect_step_file_recursive()
                     else:
                         all_step_file[step['id']] = new_cwl
-                        alias_name = self.cwl_dependency_aliases[step['run']]
+                        alias_name = None
+                        for k, v in self.cwl_dependency_aliases.items():
+                            if step['run'] == v:
+                                alias_name = k # self.cwl_dependency_aliases[step['run']]
+                        assert(alias_name)
                         # new_cwl.print_template_standalone_text(alias=alias_name)
                         # new_cwl.print_body()
                         # new_cwl.print_template_config()
@@ -1211,39 +1321,73 @@ class CWLFile:
             
         outfile.write(file_output)
 
-    def export_to_dir(self, source_dir: str, target_dir: str = "./"):
+    def export_to_dir(self, target_dir: str = "./"):
         # This function assume user might give a single file not located in its
         # workflow folder as cwl_path (e.g. copy a single file and put it in
         # current dir). Thus, we need another source of information to infer the
         # structure of workflow folder. In this case we request source_dir.
 
         ## First we get all the folders we need to create in target_dir. 
+        # dirs_list = []
+        # short_source_dir = source_dir.split('/')[-1]
+        # for root, dirs_walked, files_walked in os.walk(source_dir):
+        #     print("Walking in {}: rooot {} dirs_walked {}".format(source_dir, root, dirs_walked))
+        #     # Say root is : 'abc/def/source_dir/ghi/jkl'. We take 'source_dir/ghi/jkl'
+        #     source_until_deepest = '/'.join(root.split('/')[root.split('/').index(short_source_dir):])
+        #     dirs_list.extend(["{}/{}".format(source_until_deepest, d) for d in dirs_walked])
+
+        # print("Dirs list: {}".format(dirs_list))
+
+        # ## Now we infer the correct location for our files based on source file's
+        # ## dependency. 
+        # target_path = None
+        # sanity_check_dirs = set()
+        # # print(self.cwl_dependencies)
+        # for dep in self.cwl_dependencies:
+        #     # print("{}".format(dep))
+        #     if (not dep[:1] == ".."):
+        #         dir_same_level = dep.split('/')[0]
+        #     sanity_check_dirs.add(dir_same_level)
+        #     if not target_path:
+        #         for dir in dirs_list:
+        #             if dir_same_level == dir.split('/')[-1]:
+        #                 target_path = '/'.join(dir.split('/')[:-1])
+
+        # for dir in set(sanity_check_dirs):
+        #     print("Checking {}/{} in {}".format(target_path, dir, dirs_list))
+        #     assert("{}/{}".format(target_path, dir) in dirs_list)
+        
+        # # Once we found the target_path, we can start translating the target
+        # # file and all its steps.
+        # for d in dirs_list:
+        #     Path("{}/{}".format(target_dir, d)).mkdir(parents=True, exist_ok=True)
+
+        # Things are too flaky above. Let's redo things here
+        ## First we get the whole project structure from the cwl_file path
+        print(self.cwl_path)
+        ## Then we traverse using os.walk, saving every directory to a list
+        source_dir = None
+        cwl_path_split = self.cwl_path.split('/')
+        parent_dir = '/'.join(cwl_path_split[:-1])
+        for idx, dir in enumerate(cwl_path_split):
+            if dir != '..':
+                source_dir = '/'.join(cwl_path_split[:idx]) + '/{}'.format(dir)
+                break
+
         dirs_list = []
         short_source_dir = source_dir.split('/')[-1]
         for root, dirs_walked, files_walked in os.walk(source_dir):
-            # Say root is : 'abc/def/source_dir/ghi/jkl'. We take 'source_dir/ghi/jkl'
             source_until_deepest = '/'.join(root.split('/')[root.split('/').index(short_source_dir):])
             dirs_list.extend(["{}/{}".format(source_until_deepest, d) for d in dirs_walked])
 
-        ## Now we infer the correct location for our files based on source file's
-        ## dependency. 
+        # At this point we know the following:
+        # 1.) parent_dir = <path_to_file> + '../'
+        # 2.) target_dir = <all '../'> + parent_dir
+        # Then we construct the right target path by appending parent_dir to target_dir
         target_path = None
-        sanity_check_dirs = set()
-        for dep in self.cwl_dependencies:
-            if (not dep[:2] == ".."):
-                dir_same_level = dep.split('/')[0]
-            sanity_check_dirs.add(dir_same_level)
-            if not target_path:
-                for dir in dirs_list:
-                    if dir_same_level == dir.split('/')[-1]:
-                        target_path = '/'.join(dir.split('/')[:-1])
-        for dir in set(sanity_check_dirs):
-            assert("{}/{}".format(target_path, dir) in dirs_list)
-        
-        # Once we found the target_path, we can start translating the target
-        # file and all its steps.
-        for d in dirs_list:
-            Path("{}/{}".format(target_dir, d)).mkdir(parents=True, exist_ok=True)
+        for idx, dir in enumerate(parent_dir.split('/')):
+            if dir != '..':
+                target_path = '/'.join(parent_dir.split('/')[idx:])
         self.export_to_file("{}/{}".format(target_dir, target_path))
         for _, step_file in self.step_files.items():
             # For each step file's cwl_path, we take substring starting with
@@ -1314,12 +1458,16 @@ if __name__ == "__main__":
     cwl_path = sys.argv[1]
 
     cwl_file = CWLFile(cwl_path)
+
     if cwl_file.cwl_class == "Workflow":
         all_step_file = cwl_file.collect_step_file_recursive()
         for step_id, step_file in all_step_file.items():
             step_file.print_template_header()
             step_file.print_params_declaration()
             step_file.print_body()
+
+        # We need to the dependencies after adding all step files
+        cwl_file.update_self()
 
         cwl_file.print_template_header()
         cwl_file.print_params_declaration()
@@ -1358,6 +1506,4 @@ if __name__ == "__main__":
         cwl_file.construct_workflow_all_params()
 
     if args.export_to_dir:
-        # cwl_file.export_to_file(args.export_to_dir)
-        source_dir, target_dir = args.export_to_dir
-        cwl_file.export_to_dir(source_dir, target_dir)
+        cwl_file.export_to_dir(args.export_to_dir[0])
