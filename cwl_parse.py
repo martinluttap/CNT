@@ -1340,7 +1340,7 @@ class CWLFile:
             dirs_list.extend(["{}/{}".format(source_until_deepest, d) for d in dirs_walked])
 
         # At this point we know the following:
-        # 1.) parent_dir = <path_to_file> + '../'
+        # 1.) parent_dir = <path_to_file> + '../'g
         # 2.) target_dir = <all '../'> + parent_dir
         # Then we construct the right target path by appending parent_dir to target_dir
         target_path = None
