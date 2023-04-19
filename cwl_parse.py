@@ -1322,47 +1322,6 @@ class CWLFile:
         outfile.write(file_output)
 
     def export_to_dir(self, target_dir: str = "./"):
-        # This function assume user might give a single file not located in its
-        # workflow folder as cwl_path (e.g. copy a single file and put it in
-        # current dir). Thus, we need another source of information to infer the
-        # structure of workflow folder. In this case we request source_dir.
-
-        ## First we get all the folders we need to create in target_dir. 
-        # dirs_list = []
-        # short_source_dir = source_dir.split('/')[-1]
-        # for root, dirs_walked, files_walked in os.walk(source_dir):
-        #     print("Walking in {}: rooot {} dirs_walked {}".format(source_dir, root, dirs_walked))
-        #     # Say root is : 'abc/def/source_dir/ghi/jkl'. We take 'source_dir/ghi/jkl'
-        #     source_until_deepest = '/'.join(root.split('/')[root.split('/').index(short_source_dir):])
-        #     dirs_list.extend(["{}/{}".format(source_until_deepest, d) for d in dirs_walked])
-
-        # print("Dirs list: {}".format(dirs_list))
-
-        # ## Now we infer the correct location for our files based on source file's
-        # ## dependency. 
-        # target_path = None
-        # sanity_check_dirs = set()
-        # # print(self.cwl_dependencies)
-        # for dep in self.cwl_dependencies:
-        #     # print("{}".format(dep))
-        #     if (not dep[:1] == ".."):
-        #         dir_same_level = dep.split('/')[0]
-        #     sanity_check_dirs.add(dir_same_level)
-        #     if not target_path:
-        #         for dir in dirs_list:
-        #             if dir_same_level == dir.split('/')[-1]:
-        #                 target_path = '/'.join(dir.split('/')[:-1])
-
-        # for dir in set(sanity_check_dirs):
-        #     print("Checking {}/{} in {}".format(target_path, dir, dirs_list))
-        #     assert("{}/{}".format(target_path, dir) in dirs_list)
-        
-        # # Once we found the target_path, we can start translating the target
-        # # file and all its steps.
-        # for d in dirs_list:
-        #     Path("{}/{}".format(target_dir, d)).mkdir(parents=True, exist_ok=True)
-
-        # Things are too flaky above. Let's redo things here
         ## First we get the whole project structure from the cwl_file path
         print(self.cwl_path)
         ## Then we traverse using os.walk, saving every directory to a list
@@ -1385,9 +1344,11 @@ class CWLFile:
         # 2.) target_dir = <all '../'> + parent_dir
         # Then we construct the right target path by appending parent_dir to target_dir
         target_path = None
-        for idx, dir in enumerate(parent_dir.split('/')):
+        for idx, dir in enumerate(self.cwl_path.split('/')[:-1]):
             if dir != '..':
-                target_path = '/'.join(parent_dir.split('/')[idx:])
+                target_path = '/'.join(self.cwl_path.split('/')[idx:-1])
+                break
+        print("{} to {}".format(self.cwl_path, target_path))
         self.export_to_file("{}/{}".format(target_dir, target_path))
         for _, step_file in self.step_files.items():
             # For each step file's cwl_path, we take substring starting with
