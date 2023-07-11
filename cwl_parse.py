@@ -414,7 +414,8 @@ class CWLFile:
                 declaration_lines += line
             
             declaration_lines += '\n'
-            
+        
+        print(declaration_lines)
         return declaration_lines
 
 
@@ -422,8 +423,8 @@ class CWLFile:
         ret_str = ""
         if self.cwl_class == "Workflow":
             alias_name = self.cwl_path.split('/')[-1][:-len(".cwl")]
-            # ret_str += self.print_template_workflow(alias_name=str.upper(alias_name))
-            ret_str += self.print_template_workflow_recursive(alias_name=str.upper(alias_name))
+            ret_str += self.print_template_workflow(alias_name=str.upper(alias_name))
+            # ret_str += self.print_template_workflow_recursive(alias_name=str.upper(alias_name))
         else:
             ret_str += self.print_template_process()
 
@@ -784,7 +785,6 @@ class CWLFile:
             process = subprocess.run(bash_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             output = r"{}".format(process.stdout.decode('utf8'))
             inspect_result = json.loads(output)
-            print("Inspected docker {}, result {}".format(image_url, inspect_result))
             if (len(inspect_result)):
                 assert(len(inspect_result) == 1) # It doesn't make sense to have more than one
                 assert("ContainerConfig" in inspect_result[0])
@@ -949,13 +949,13 @@ class CWLFile:
                     step_short_fn = step_file.get_short_filename()
                     step_alias = self.find_short_filename_alias(step_short_fn)
 
-                    wf_main_entry = ""
-                    if step_file.cwl_class == 'Workflow':
-                        wf_main_entry = step_file.print_template_workflow_recursive(step_alias)
-                        wf_main += "{}".format(wf_main_entry)
-                    else:
-                        wf_main_entry = self.add_tabs(step_file.print_template_wf_body(step_alias), num_tabs=2)
-                        wf_main += "{}".format(wf_main_entry)
+                    # wf_main_entry = ""
+                    # if step_file.cwl_class == 'Workflow':
+                    #     wf_main_entry = step_file.print_template_workflow_recursive(step_alias)
+                    #     wf_main += "{}".format(wf_main_entry)
+                    # else:
+                    wf_main_entry = self.add_tabs(step_file.print_template_wf_body(step_alias), num_tabs=2)
+                    wf_main += "{}".format(wf_main_entry)
     
         wf_emit = self.workflow_format_emit_list(wf_emit_list)
         subs = {
@@ -993,12 +993,8 @@ class CWLFile:
                     step_short_fn = step_file.get_short_filename()
                     step_alias = self.find_short_filename_alias(step_short_fn)
 
-                    print("Workflow {} generation {} step {}".format(
-                        self.cwl_name, generation, step_alias
-                    ))
-
                     if step_file.cwl_class == 'Workflow':
-                        wf_main_entry = step_file.print_template_workflow(step_alias)
+                        wf_main_entry = step_file.print_template_wf_body(step_alias)
                         wf_main += "{}".format(wf_main_entry)
                     else:
                         wf_main_entry = self.add_tabs(step_file.print_template_wf_body(step_alias), num_tabs=2)
@@ -1013,7 +1009,6 @@ class CWLFile:
         }
 
         result = template.substitute(subs)
-
         return result
 
     def print_template_standalone_text(self, alias: str = None):
@@ -1340,7 +1335,7 @@ class CWLFile:
             dirs_list.extend(["{}/{}".format(source_until_deepest, d) for d in dirs_walked])
 
         # At this point we know the following:
-        # 1.) parent_dir = <path_to_file> + '../'g
+        # 1.) parent_dir = <path_to_file> + '../'
         # 2.) target_dir = <all '../'> + parent_dir
         # Then we construct the right target path by appending parent_dir to target_dir
         target_path = None
