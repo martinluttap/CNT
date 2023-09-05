@@ -4,7 +4,8 @@ from pathlib import Path
 from string import Template
 from typing import List
 
-import ast 
+import ast
+import csv 
 import json
 import logging
 import os
@@ -1474,17 +1475,33 @@ if __name__ == "__main__":
         # Second, we manage both static and dynamic resource requirements. 
         all_step_file = cwl_file.collect_step_file_recursive()
         
+        req_d = {}
         for step_id, step_file in all_step_file.items():
             if (step_file.cwl_class != "Workflow") and step_file.container_uri:
+                process_name = str.upper(step_file.get_short_filename()[:-len('.cwl')])
                 print("withName:{}{{\n\tcontainer = '{}'\n}}".format(
-                    str.upper(step_file.get_short_filename()[:-len('.cwl')]), 
+                    process_name, 
                               step_file.container_uri)
                 )
+                req_d[process_name] = step_file.resource_requirements
         # Here we handle the extraction of both static and dynamic resource requirements. 
         # (a) We first handle static requirements simply by extracting the ResourceRequirement field in the CWL
-        print(f"Resource requirements for {step_file.cwl_id}")
-        print(json.dumps(step_file.resource_requirements, indent=4))
+        print(json.dumps(req_d, indent=4))
         
+        with open('requirements.csv', 'w', newline='') as csvfile:
+            fieldnames = ['withName', 'coresMin', 'ramMin', 'tmpdirMin', 'outdirMin']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for proc_name, req in req_d.items():            
+                row = {'withName': proc_name, 
+                       'coresMin': req['coresMin'],
+                       'ramMin': req['ramMin'],
+                       'tmpdirMin': req['tmpdirMin'],
+                       'outdirMin': req['outdirMin']
+                       }
+                writer.writerow(row)
+
     if args.show_dag:
         cwl_file.show_dag()
             
