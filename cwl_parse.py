@@ -90,6 +90,7 @@ class CWLFile:
         self.cwl_steps = None
         self.cwl_id = None
         self.container_uri = None
+        self.resource_requirements = None
         self.cwl_name = None
         self.cwl_dependencies = None
         self.cwl_dependency_aliases = None
@@ -105,6 +106,7 @@ class CWLFile:
         self.get_cwl_object(cwl_path)
         self.get_id()
         self.get_container_uri()
+        self.get_resource_requirements()
         self.get_name()
         self.get_class()
         self.get_inputs()
@@ -124,6 +126,7 @@ class CWLFile:
         self.get_cwl_object(cwl_path)
         self.get_id()
         self.get_container_uri()
+        self.get_resource_requirements()
         self.get_name()
         self.get_class()
         self.get_inputs()
@@ -173,6 +176,24 @@ class CWLFile:
         # For now we change it to 'ubuntu:latest'.
         if self.container_uri and "alpine" in self.container_uri:
             self.container_uri = "ubuntu:latest" 
+
+    def get_resource_requirements(self):
+        req_d = {}
+        # First, we loop through the requirements list to find class ResourceRequirements.
+        if "requirements" in self.cwl_object:
+            for req in self.cwl_object["requirements"]:
+                if req["class"] == "ResourceRequirement":
+                    # Following that, we extract 4 main pieces of information:
+                    # coresMin, ramMin, tmpdirMin, and outdirMin.
+                    # There are two forms of resource information: 
+                    # 1.) Static information, denoted by literals (e.g. integer or stirng)
+                    # 2.) Dynamic information, denoted by Javascript expression.  
+                    req_d['coresMin'] = req['coresMin'] if 'coresMin' in req else None
+                    req_d['ramMin'] = req['ramMin'] if 'ramMin' in req else None
+                    req_d['tmpdirMin'] = req['tmpdirMin'] if 'tmpdirMin' in req else None
+                    req_d['outdirMin'] = req['outdirMin'] if 'outdirMin' in req else None
+
+        self.resource_requirements = req_d
 
     def get_name(self):
         self.cwl_name = self.cwl_object["id"].replace('-', '_').split("#")[-1]
@@ -1448,14 +1469,22 @@ if __name__ == "__main__":
         cwl_file.print_template_standalone_text()
     
     if args.with_wf_config:
+        # We handle two things when generaitng config
+        # First, we manage docker path and entrypoint 
+        # Second, we manage both static and dynamic resource requirements. 
         all_step_file = cwl_file.collect_step_file_recursive()
+        
         for step_id, step_file in all_step_file.items():
             if (step_file.cwl_class != "Workflow") and step_file.container_uri:
                 print("withName:{}{{\n\tcontainer = '{}'\n}}".format(
                     str.upper(step_file.get_short_filename()[:-len('.cwl')]), 
                               step_file.container_uri)
                 )
-
+        # Here we handle the extraction of both static and dynamic resource requirements. 
+        # (a) We first handle static requirements simply by extracting the ResourceRequirement field in the CWL
+        print(f"Resource requirements for {step_file.cwl_id}")
+        print(json.dumps(step_file.resource_requirements, indent=4))
+        
     if args.show_dag:
         cwl_file.show_dag()
             
