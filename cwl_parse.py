@@ -788,10 +788,10 @@ class CWLFile:
             if (len(inspect_result)):
                 assert(len(inspect_result) == 1) # It doesn't make sense to have more than one
                 assert("ContainerConfig" in inspect_result[0])
-                # entry_point = inspect_result[0]['ContainerConfig']['Entrypoint'] 
-                # if entry_point:
-                ret_script = ("#!" + ret_script) if ret_script else "#!"
-                ret_script = ret_script + " #"
+                entry_point = inspect_result[0]['ContainerConfig']['Entrypoint'] 
+                if entry_point:
+                    ret_script = ("#!" + ret_script) if ret_script else "#!"
+                    ret_script = ret_script + " #"
 
         return ret_script
 
@@ -1354,6 +1354,7 @@ class CWLFile:
             step_export_path = "{}/{}".format(target_dir, step_target_folder)
 
             step_file.export_to_file(step_export_path)
+
 class CWLStep(CWLFile):
     def __init__(self, cwl_path, parent: CWLFile) -> None:
         super().__init__(cwl_path)
