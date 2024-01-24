@@ -27,7 +27,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
 logging.basicConfig(format=FORMAT)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 # Argument parsing
 parser = ArgumentParser(description="Automated CWL <-> X Translator")
@@ -143,6 +143,9 @@ class CWLFile:
             self.get_dag()
         # for step_id, step_file in self.step_files.items():
         #     step_file.update_self()
+
+    def __repr__(self) -> str:
+        return f"CWLFile(name={self.cwl_name},dependencies={self.cwl_dependencies},coresMin={self.resource_requirements['coresMin'] if 'coresMin' in self.resource_requirements else None},ramMin={self.resource_requirements['ramMin'] if 'ramMin' in self.resource_requirements else None},parent={(self.parent if 'parent' in self.__dict__ else None)})"
 
     def get_cwl_object(self, cwl_path):
         # File Input - This is the only thing you will need to adjust or take in
@@ -789,7 +792,7 @@ class CWLFile:
             arguments.append(prefix_and_val)
             
 
-        ret_script = " ".join(arguments) if len(arguments) > 1 else None
+        ret_script += " ".join(arguments) if len(arguments) > 1 else None
         # # If script is empty at this point, the CWL file must only contain an expression
         # if not ret_script:
         #     assert('expression' in self.cwl_object.keys())
@@ -1330,7 +1333,7 @@ class CWLFile:
         outfile = open(
             "{}{}".format(dirs, file_path), 
         'w')
-        print("Exporting {} to {}".format(self_short_fn, (dirs + file_path)))
+        logger.debug("Exporting {} to {}".format(self_short_fn, (dirs + file_path)))
         file_output = ""
         file_output += self.print_template_header()
         file_output += self.print_params_declaration()
@@ -1381,6 +1384,9 @@ class CWLStep(CWLFile):
     def __init__(self, cwl_path, parent: CWLFile) -> None:
         super().__init__(cwl_path)
         self.parent = parent
+
+    def __repr__(self) -> str:
+        return f"CWLStep(name={self.cwl_name},dependencies={self.cwl_dependencies},coresMin={self.resource_requirements['coresMin'] if 'coresMin' in self.resource_requirements else None},ramMin={self.resource_requirements['ramMin'] if 'ramMin' in self.resource_requirements else None},parent={(self.parent if 'parent' in self.__dict__ else None)})"
 
     def get_input_source_sink_dict(self):
         short_fn = self.get_short_filename()
@@ -1453,6 +1459,8 @@ if __name__ == "__main__":
         cwl_file.print_body()
     else:
         cwl_file.print_body()
+    
+    print(cwl_file.dag)
 
     if args.single_file:
         if cwl_file.cwl_class == "Workflow":
@@ -1493,13 +1501,16 @@ if __name__ == "__main__":
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
             writer.writeheader()
-            for proc_name, req in req_d.items():            
-                row = {'withName': proc_name, 
-                       'coresMin': req['coresMin'],
-                       'ramMin': req['ramMin'],
-                       'tmpdirMin': req['tmpdirMin'],
-                       'outdirMin': req['outdirMin']
-                       }
+            for proc_name, req in req_d.items():
+                try:   
+                    row = {'withName': proc_name, 
+                        'coresMin': req['coresMin'],
+                        'ramMin': req['ramMin'],
+                        'tmpdirMin': req['tmpdirMin'],
+                        'outdirMin': req['outdirMin']
+                        }
+                except KeyError as e:
+                    logger.info(f"Key {e} does not exist for {proc_name}. Available keys: {req.keys()}")
                 writer.writerow(row)
 
     if args.show_dag:
