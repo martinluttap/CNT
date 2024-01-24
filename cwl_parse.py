@@ -790,9 +790,12 @@ class CWLFile:
                 # fine-tune the translation output. 
                 prefix_and_val = prefix + separator + self.translate_js(e['inputBinding']['valueFrom'])
             arguments.append(prefix_and_val)
-            
-
-        ret_script += " ".join(arguments) if len(arguments) > 1 else None
+        
+        if ret_script and len(arguments) > 1:
+            ret_script += " ".join(arguments)
+        else:
+            ret_script = None
+        # ret_script = " ".join(arguments) if len(arguments) > 1 else None
         # # If script is empty at this point, the CWL file must only contain an expression
         # if not ret_script:
         #     assert('expression' in self.cwl_object.keys())
