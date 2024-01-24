@@ -4,9 +4,12 @@
 *.json
 *.sh
 *.csv
-.DS_Store
+*.nf
 
 libs/
+
+.DS_Store
+.python-version
 
 # Except templates
 !templates/*

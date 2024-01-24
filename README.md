@@ -11,6 +11,11 @@ CNT utilizes [https://github.com/common-workflow-language/cwl-utils](cwl-utils),
 
 ## Release
 
+## Notes
+
+As of now, we are aware of the following limitations for CNT:
+- For any `Workflow` file, there should be no step which has the same name as filename (e.g. workflow file `bwa_se` should not have any step with name `bwa_se`).
+
 ## Citation
 
 CNT was published in IEEE BIBE 2023. If you use CNT in any of your work, please consider citing the publication! This will allow us to track how useful CNT is, and also identify potential improvements.   

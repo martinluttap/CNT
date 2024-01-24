@@ -34,43 +34,43 @@ parser = ArgumentParser(description="Automated CWL <-> X Translator")
 parser.add_argument("cwl_source", help="Source CWL file")
 
 parser.add_argument(
-    "--import_yaml",
+    "--import-yaml",
     action="store_true",
     help="Read YAML import_yaml",
 )
 parser.add_argument(
-    "--inspect_docker",
+    "--inspect-docker",
     action="store_true",
     help="Optimize translation by allowing inspection of docker images. \
         WARNING: This option will pull the docker images and does not clean them up.",
 )
 parser.add_argument(
-    "--unit_test",
+    "--unit-test",
     action="store_true",
     help="Append a Workflow(...) call for stand-alone execution.",
 )
 parser.add_argument(
-    "--with_tool_config",
+    "--with-tool-config",
     action="store_true",
     help="Generate <cwl_source>.nextflow.config for docker usage.",
 )
 parser.add_argument(
-    "--show_dag",
+    "--show-dag",
     action="store_true",
     help="Print the DAG of workflow.",
 )
 parser.add_argument(
-    "--single_file",
+    "--single-file",
     action="store_true",
     help="Output translation only for the given file",
 )
 parser.add_argument(
-    "--with_wf_config",
+    "--with-wf-config",
     action="store_true",
     help="Generate <cwl_source>.nextflow.config with all tool configs associated with this cwl.",
 )
 parser.add_argument(
-    "--export_to_dir",
+    "--export-to-dir",
     nargs=1,
     metavar = ('TARGET_DIR'),
     action="store",
@@ -934,7 +934,7 @@ class CWLFile:
         
         return new_str
 
-    def find_short_filename_alias(self, short_filename):
+    def find_short_filename_alias(self, short_filename: str) -> str:
         # short_filename: xyz.cwl (UNIX's basename, retaining extension)
         alias_name = None
         for alias, rel_path in self.cwl_dependency_aliases.items():
@@ -942,7 +942,7 @@ class CWLFile:
             if (rel_path_fn == short_filename) and (alias in self.dag.nodes):
                 alias_name = alias
         
-        assert(alias_name)
+        assert(alias_name), f"Failed finding alias for '{short_filename}'."
         return alias_name
     
     def get_short_filename(self):
