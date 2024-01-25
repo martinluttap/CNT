@@ -1,16 +1,15 @@
-from cli import args
 from logger import logger
-from itertools import count
 from pathlib import Path
 from string import Template
 from typing import Dict, List
 
-import csv 
+import argparse
+import logging
 import json
 import os
+import sys
 import re
 import subprocess
-import sys
 import yaml
 
 # Local libraries
@@ -18,12 +17,12 @@ from libs.DAGDrawer import DagDrawer
 
 # Third-party libraries
 from cwl_utils.parser import load_document_by_uri, save
-import matplotlib.pyplot as plt
 import networkx as nx
-import numpy as np
 
 class CWLFile:
-    def __init__(self, cwl_path: str) -> None:
+    def __init__(self, cwl_path: str, logger: logging.Logger, inspect_docker: bool = False) -> None:
+        self.logger: logging.Logger = logger
+        self.inspect_docker: bool = inspect_docker
         self.cwl_path: str = cwl_path
         self.cwl_object = None
         self.cwl_class = None
@@ -65,7 +64,7 @@ class CWLFile:
         # self.get_id()
 
     def update_self(self):
-        self.get_cwl_object(cwl_path)
+        self.get_cwl_object(self.cwl_path)
         self.get_id()
         self.get_container_uri()
         self.get_resource_requirements()
@@ -400,7 +399,7 @@ class CWLFile:
         return ret_str
 
     def print_template_config(self):
-        file_dir = os.path.dirname(os.path.realpath(__file__))
+        file_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
         in_template = open(file_dir + "/templates/template_config.txt", "r")
         template = Template(in_template.read())
 
@@ -412,13 +411,13 @@ class CWLFile:
         results = template.substitute(subs)
 
         outfile = open("{}.nextflow.config".format(
-            os.path.dirname(os.path.abspath(__file__)) + '/' + str.upper(self.cwl_name)),
+            os.path.dirname(os.path.abspath(sys.argv[0])) + '/' + str.upper(self.cwl_name)),
             'w'
         )
         outfile.write(results)
 
     def print_template_process(self):
-        file_dir = os.path.dirname(os.path.realpath(__file__))
+        file_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
         in_template = open(file_dir + "/templates/template_process.txt", "r")
         template = Template(in_template.read())
 
@@ -747,7 +746,7 @@ class CWLFile:
         # If inspect_docker is enabled, we check whether the container has entry
         # point. If it does, we add '#!' and '#' at beginning and end of the
         # script, respectively.
-        if args.inspect_docker:
+        if self.inspect_docker:
             image_url = self.container_uri
             bash_command = "docker inspect {}".format(image_url)
             process = subprocess.run(bash_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -982,7 +981,7 @@ class CWLFile:
 
     def print_template_standalone_text(self, alias: str = None):
         in_template = open(
-            "{}/templates/template_standalone_test.txt".format(os.path.dirname(os.path.abspath(__file__))), "r"
+            "{}/templates/template_standalone_test.txt".format(os.path.dirname(os.path.abspath(sys.argv[0]))), "r"
         )
         template = Template(in_template.read())
 
@@ -1321,8 +1320,13 @@ class CWLFile:
             step_file.export_to_file(step_export_path)
 
 class CWLStep(CWLFile):
-    def __init__(self, cwl_path, parent: CWLFile) -> None:
-        super().__init__(cwl_path)
+    def __init__(self, cwl_path: str, parent: CWLFile) -> None:
+        CWLFile.__init__(
+            self,
+            cwl_path=cwl_path,
+            logger=parent.logger,
+            inspect_docker=parent.inspect_docker
+        )
         self.parent = parent
 
     def __repr__(self) -> str:
@@ -1378,84 +1382,3 @@ class CWLStep(CWLFile):
             
         return arg_name
 
-
-if __name__ == "__main__":
-    cwl_path = sys.argv[1]
-
-    cwl_file = CWLFile(cwl_path)
-
-    if cwl_file.cwl_class == "Workflow":
-        all_step_file = cwl_file.collect_step_file_recursive()
-        for step_id, step_file in all_step_file.items():
-            step_file.print_template_header()
-            step_file.print_params_declaration()
-            step_file.print_body()
-
-        # We need to the dependencies after adding all step files
-        cwl_file.update_self()
-
-        cwl_file.print_template_header()
-        cwl_file.print_params_declaration()
-        cwl_file.print_body()
-    else:
-        cwl_file.print_body()
-    
-    if args.single_file:
-        if cwl_file.cwl_class == "Workflow":
-            print(cwl_file.print_template_header())
-            print(cwl_file.print_params_declaration())
-            print(cwl_file.print_body())
-        else:
-            print(cwl_file.print_body())
-
-
-    if args.with_tool_config:
-        cwl_file.print_template_config()
-
-    if args.unit_test:
-        cwl_file.print_template_standalone_text()
-    
-    if args.with_wf_config:
-        # We handle two things when generaitng config
-        # First, we manage docker path and entrypoint 
-        # Second, we manage both static and dynamic resource requirements. 
-        all_step_file = cwl_file.collect_step_file_recursive()
-        
-        req_d = {}
-        for step_id, step_file in all_step_file.items():
-            if (step_file.cwl_class != "Workflow") and step_file.container_uri:
-                process_name = str.upper(step_file.get_short_filename()[:-len('.cwl')])
-                logger.debug("withName:{}{{\n\tcontainer = '{}'\n}}".format(
-                    process_name, 
-                              step_file.container_uri)
-                )
-                req_d[process_name] = step_file.resource_requirements
-        # Here we handle the extraction of both static and dynamic resource requirements. 
-        # (a) We first handle static requirements simply by extracting the ResourceRequirement field in the CWL
-        logger.debug(json.dumps(req_d, indent=4))
-        
-        with open('requirements.csv', 'w', newline='') as csvfile:
-            fieldnames = ['withName', 'coresMin', 'ramMin', 'tmpdirMin', 'outdirMin']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-            writer.writeheader()
-            for proc_name, req in req_d.items():
-                try:   
-                    row = {'withName': proc_name, 
-                        'coresMin': req['coresMin'],
-                        'ramMin': req['ramMin'],
-                        'tmpdirMin': req['tmpdirMin'],
-                        'outdirMin': req['outdirMin']
-                        }
-                except KeyError as e:
-                    logger.debug(f"Key {e} does not exist for {proc_name}. Available keys: {req.keys()}")
-                writer.writerow(row)
-
-    if args.show_dag:
-        cwl_file.show_dag()
-            
-    if args.import_yaml:
-        cwl_file.construct_workflow_all_params()
-
-    if args.export_to_dir:
-        cwl_file.export_to_dir(args.export_to_dir[0])
