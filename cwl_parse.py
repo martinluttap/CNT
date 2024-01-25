@@ -2,9 +2,8 @@ from argparse import ArgumentParser
 from itertools import count
 from pathlib import Path
 from string import Template
-from typing import List
+from typing import Dict, List
 
-import ast
 import csv 
 import json
 import logging
@@ -82,16 +81,16 @@ parser.set_defaults(unit_test=False)
 parser.set_defaults(with_tool_config=False)
 args = parser.parse_args()
 class CWLFile:
-    def __init__(self, cwl_path) -> None:
-        self.cwl_path = cwl_path
+    def __init__(self, cwl_path: str) -> None:
+        self.cwl_path: str = cwl_path
         self.cwl_object = None
         self.cwl_class = None
-        self.cwl_inputs = None  # List
-        self.cwl_outputs = None
+        self.cwl_inputs: List[str] = None  # List
+        self.cwl_outputs: List[str] = None
         self.cwl_steps = None
-        self.cwl_id = None
-        self.container_uri = None
-        self.resource_requirements = None
+        self.cwl_id: str = None
+        self.container_uri: str = None
+        self.resource_requirements: Dict[str, int] = None
         self.cwl_name = None
         self.cwl_dependencies = None
         self.cwl_dependency_aliases = None
@@ -298,7 +297,7 @@ class CWLFile:
                 if node not in all_nodes:
                     all_nodes[node] = set()
                 all_nodes[key].add(node)
-
+        
     def show_dag(self):
         cwl_filename = self.cwl_object['id'].split('#')[0].split('/')[-1]
         # Also draw DAG to a PNG
@@ -440,7 +439,6 @@ class CWLFile:
             
             declaration_lines += '\n'
         
-        print(declaration_lines)
         return declaration_lines
 
 
@@ -1016,6 +1014,7 @@ class CWLFile:
         for idx_generation, generation in enumerate(list(nx.topological_generations(self.dag))):
             for idx_node, node in enumerate(generation):
                 if node in self.step_files: # not an input / output
+                    print(f"{self.get_id()} sees idx-{idx_generation}, node: {node}")
                     step_file = self.step_files[node]
                     # Here we find the alias name
                     step_short_fn = step_file.get_short_filename()
@@ -1056,8 +1055,6 @@ class CWLFile:
         }
 
         result = template.substitute(subs)
-
-        print(result)
 
         return result
 
@@ -1346,7 +1343,6 @@ class CWLFile:
 
     def export_to_dir(self, target_dir: str = "./"):
         ## First we get the whole project structure from the cwl_file path
-        print(self.cwl_path)
         ## Then we traverse using os.walk, saving every directory to a list
         source_dir = None
         cwl_path_split = self.cwl_path.split('/')
@@ -1371,7 +1367,6 @@ class CWLFile:
             if dir != '..':
                 target_path = '/'.join(self.cwl_path.split('/')[idx:-1])
                 break
-        print("{} to {}".format(self.cwl_path, target_path))
         self.export_to_file("{}/{}".format(target_dir, target_path))
         for _, step_file in self.step_files.items():
             # For each step file's cwl_path, we take substring starting with
@@ -1463,8 +1458,6 @@ if __name__ == "__main__":
     else:
         cwl_file.print_body()
     
-    print(cwl_file.dag)
-
     if args.single_file:
         if cwl_file.cwl_class == "Workflow":
             print(cwl_file.print_template_header())
@@ -1490,14 +1483,14 @@ if __name__ == "__main__":
         for step_id, step_file in all_step_file.items():
             if (step_file.cwl_class != "Workflow") and step_file.container_uri:
                 process_name = str.upper(step_file.get_short_filename()[:-len('.cwl')])
-                print("withName:{}{{\n\tcontainer = '{}'\n}}".format(
+                logger.debug("withName:{}{{\n\tcontainer = '{}'\n}}".format(
                     process_name, 
                               step_file.container_uri)
                 )
                 req_d[process_name] = step_file.resource_requirements
         # Here we handle the extraction of both static and dynamic resource requirements. 
         # (a) We first handle static requirements simply by extracting the ResourceRequirement field in the CWL
-        print(json.dumps(req_d, indent=4))
+        logger.debug(json.dumps(req_d, indent=4))
         
         with open('requirements.csv', 'w', newline='') as csvfile:
             fieldnames = ['withName', 'coresMin', 'ramMin', 'tmpdirMin', 'outdirMin']
@@ -1513,7 +1506,7 @@ if __name__ == "__main__":
                         'outdirMin': req['outdirMin']
                         }
                 except KeyError as e:
-                    logger.info(f"Key {e} does not exist for {proc_name}. Available keys: {req.keys()}")
+                    logger.debug(f"Key {e} does not exist for {proc_name}. Available keys: {req.keys()}")
                 writer.writerow(row)
 
     if args.show_dag:
