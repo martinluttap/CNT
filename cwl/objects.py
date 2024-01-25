@@ -3,7 +3,6 @@ from pathlib import Path
 from string import Template
 from typing import Any, Dict, List, Set
 
-import argparse
 import logging
 import json
 import os
@@ -1404,19 +1403,19 @@ class CWLStep(CWLFile):
             logger=parent.logger,
             inspect_docker=parent.inspect_docker,
         )
-        self.parent = parent
+        self.parent: CWLFile = parent
 
     def __repr__(self) -> str:
-        return f"CWLStep(name={self.cwl_name},dependencies={self.cwl_dependencies},coresMin={self.resource_requirements['coresMin'] if 'coresMin' in self.resource_requirements else None},ramMin={self.resource_requirements['ramMin'] if 'ramMin' in self.resource_requirements else None},parent={(self.parent if 'parent' in self.__dict__ else None)})"
+        return f"CWLStep(name={self.cwl_name},dependencies={self.cwl_dependencies},coresMin={self.resource_requirements.get('coresMin', None)},ramMin={self.resource_requirements.get('ramMin', None)},parent={(self.parent if 'parent' in self.__dict__ else None)})"
 
-    def get_input_source_sink_dict(self):
-        short_fn = self.get_short_filename()
-        alias = self.parent.find_short_filename_alias(short_fn)
+    def get_input_source_sink_dict(self) -> None:
+        short_fn: str = self.get_short_filename()
+        alias: str = self.parent.find_short_filename_alias(short_fn)
         return nx.get_node_attributes(self.parent.dag, "input_sources")[alias][
             "in_sink_dict"
         ]
 
-    def get_source_sink_info(self, input_elem):
+    def get_source_sink_info(self, input_elem: Dict[str, Any]) -> str | None:
         # Here we get the following info for ourselves:
         # 1.) Parent's output as source
         # 2.) Our input as sink
@@ -1426,8 +1425,8 @@ class CWLStep(CWLFile):
 
         # It is possible that the dict does not contain input_elem
         # (e.g. input_elem has a default value)
-        step_source = None
-        emit_source = None
+        step_source: str = None
+        emit_source: str = None
         if input_elem["id"] in source_sink_dict:
             step_source = source_sink_dict[input_elem["id"]]["step_source"]
             emit_source = source_sink_dict[input_elem["id"]]["emit_source"]
@@ -1446,10 +1445,10 @@ class CWLStep(CWLFile):
                 assert (not emit_source) and (not step_source)
                 return None
 
-    def construct_workflow_arg(self, input_elem):
-        arg_name = None
+    def construct_workflow_arg(self, input_elem: Dict[str, Any]) -> str:
+        arg_name: str = None
         # Get info from source-sink info from parent's DAG
-        elem_parent_perspective = self.get_source_sink_info(input_elem)
+        elem_parent_perspective: str | None = self.get_source_sink_info(input_elem)
         # If doesn't exist from the parent's perspective,
         # it must be one of (or a combination of) optional, has default value, or
         # comes from the param file.
