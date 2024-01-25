@@ -1,5 +1,5 @@
 from argparse import ArgumentParser
- 
+
 # Argument parsing
 parser = ArgumentParser(description="Automated CWL <-> X Translator")
 parser.add_argument("cwl_source", help="Source CWL file")
@@ -43,7 +43,7 @@ parser.add_argument(
 parser.add_argument(
     "--export-to-dir",
     nargs=1,
-    metavar = ('TARGET_DIR'),
+    metavar=("TARGET_DIR"),
     action="store",
     help="Export per-file translation to designated TARGET_DIR following SOURCE_DIR's structure.",
 )
