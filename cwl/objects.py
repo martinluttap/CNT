@@ -3,7 +3,6 @@ from pathlib import Path
 from string import Template
 from typing import Any, Dict, List, Set
 
-import argparse
 import logging
 import json
 import os
@@ -35,7 +34,7 @@ class CWLFile:
         self.cwl_id: str = None
         self.container_uri: str = None
         self.resource_requirements: Dict[str, int] = None
-        self.cwl_name: List[str] = None
+        self.cwl_name: str = None
         self.cwl_dependencies: List[str] = None
         self.cwl_dependency_aliases: List[str] = None
         self.cwl_basecommand: str | List[str] = None
@@ -46,25 +45,7 @@ class CWLFile:
         self.dag: nx.DiGraph = None
         self.step_files: Dict[str, CWLStep] = {}
 
-        # Initialization methods
-        self.set_cwl_object(cwl_path)
-        self.set_id()
-        self.set_container_uri()
-        self.set_resource_requirements()
-        self.set_name()
-        self.set_class()
-        self.set_inputs()
-        self.set_outputs()
-        self.set_steps()
-        self.set_dependencies()
-        self.set_dependency_aliases()
-        self.set_basecommand()
-        self.set_arguments()
-        self.set_stdout()
-        if self.cwl_class == "Workflow":
-            self.dag = nx.DiGraph()
-            self.set_dag()
-        # self.get_id()
+        self.update_self()
 
     def update_self(self):
         self.set_cwl_object(self.cwl_path)
@@ -84,8 +65,6 @@ class CWLFile:
         if self.cwl_class == "Workflow":
             self.dag = nx.DiGraph()
             self.set_dag()
-        # for step_id, step_file in self.step_files.items():
-        #     step_file.update_self()
 
     def __repr__(self) -> str:
         return f"CWLFile(name={self.cwl_name},dependencies={self.cwl_dependencies},coresMin={self.resource_requirements['coresMin'] if 'coresMin' in self.resource_requirements else None},ramMin={self.resource_requirements['ramMin'] if 'ramMin' in self.resource_requirements else None},parent={(self.parent if 'parent' in self.__dict__ else None)})"
@@ -135,14 +114,10 @@ class CWLFile:
                     # There are two forms of resource information:
                     # 1.) Static information, denoted by literals (e.g. integer or stirng)
                     # 2.) Dynamic information, denoted by Javascript expression.
-                    req_d["coresMin"] = req["coresMin"] if "coresMin" in req else None
-                    req_d["ramMin"] = req["ramMin"] if "ramMin" in req else None
-                    req_d["tmpdirMin"] = (
-                        req["tmpdirMin"] if "tmpdirMin" in req else None
-                    )
-                    req_d["outdirMin"] = (
-                        req["outdirMin"] if "outdirMin" in req else None
-                    )
+                    req_d["coresMin"] = req.get("coresMin", None)
+                    req_d["ramMin"] = req.get("ramMin", None)
+                    req_d["tmpdirMin"] = req.get("tmpdirMin", None)
+                    req_d["outdirMin"] = req.get("outDirMin", None)
 
         self.resource_requirements = req_d
 
@@ -306,7 +281,7 @@ class CWLFile:
     def set_stdout(self) -> None:
         if "stdout" in self.cwl_object:
             self.cwl_stdout = self.cwl_object["stdout"]
-
+    
     def print_params_declaration(self, num_space_pad: int = 32) -> str:
         # Take from step's params only those which are used as arguments
         # (i.e. workflow/process might use variables from take,
@@ -1002,7 +977,6 @@ class CWLFile:
         ):
             for idx_node, node in enumerate(generation):
                 if node in self.step_files:  # not an input / output
-                    print(f"{self.set_id()} sees idx-{idx_generation}, node: {node}")
                     step_file = self.step_files[node]
                     # Here we find the alias name
                     step_short_fn = step_file.get_short_filename()
@@ -1264,7 +1238,7 @@ class CWLFile:
         self.print_body()
 
     def collect_step_file_recursive(self):
-        all_step_file = {}
+        all_step_file: Dict[str, CWLStep] = {}
         for step in self.cwl_steps:
             if "run" in step:
                 if type(step["run"]) is str:
@@ -1404,19 +1378,19 @@ class CWLStep(CWLFile):
             logger=parent.logger,
             inspect_docker=parent.inspect_docker,
         )
-        self.parent = parent
+        self.parent: CWLFile = parent
 
     def __repr__(self) -> str:
-        return f"CWLStep(name={self.cwl_name},dependencies={self.cwl_dependencies},coresMin={self.resource_requirements['coresMin'] if 'coresMin' in self.resource_requirements else None},ramMin={self.resource_requirements['ramMin'] if 'ramMin' in self.resource_requirements else None},parent={(self.parent if 'parent' in self.__dict__ else None)})"
+        return f"CWLStep(name={self.cwl_name},dependencies={self.cwl_dependencies},coresMin={self.resource_requirements.get('coresMin', None)},ramMin={self.resource_requirements.get('ramMin', None)},parent={(self.parent if 'parent' in self.__dict__ else None)})"
 
-    def get_input_source_sink_dict(self):
-        short_fn = self.get_short_filename()
-        alias = self.parent.find_short_filename_alias(short_fn)
+    def get_input_source_sink_dict(self) -> None:
+        short_fn: str = self.get_short_filename()
+        alias: str = self.parent.find_short_filename_alias(short_fn)
         return nx.get_node_attributes(self.parent.dag, "input_sources")[alias][
             "in_sink_dict"
         ]
 
-    def get_source_sink_info(self, input_elem):
+    def get_source_sink_info(self, input_elem: Dict[str, Any]) -> str | None:
         # Here we get the following info for ourselves:
         # 1.) Parent's output as source
         # 2.) Our input as sink
@@ -1426,8 +1400,8 @@ class CWLStep(CWLFile):
 
         # It is possible that the dict does not contain input_elem
         # (e.g. input_elem has a default value)
-        step_source = None
-        emit_source = None
+        step_source: str = None
+        emit_source: str = None
         if input_elem["id"] in source_sink_dict:
             step_source = source_sink_dict[input_elem["id"]]["step_source"]
             emit_source = source_sink_dict[input_elem["id"]]["emit_source"]
@@ -1446,10 +1420,10 @@ class CWLStep(CWLFile):
                 assert (not emit_source) and (not step_source)
                 return None
 
-    def construct_workflow_arg(self, input_elem):
-        arg_name = None
+    def construct_workflow_arg(self, input_elem: Dict[str, Any]) -> str:
+        arg_name: str = None
         # Get info from source-sink info from parent's DAG
-        elem_parent_perspective = self.get_source_sink_info(input_elem)
+        elem_parent_perspective: str | None = self.get_source_sink_info(input_elem)
         # If doesn't exist from the parent's perspective,
         # it must be one of (or a combination of) optional, has default value, or
         # comes from the param file.

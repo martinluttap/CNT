@@ -1,10 +1,54 @@
-from cwl.objects import CWLFile
+from abstractions import Dataflow, Datum, Step, Tool, Workflow 
+
+from cwl.objects import CWLFile, CWLStep
 from cli import args
 from logger import logger
+from typing import Any, Dict, List, Set
 
 import csv
 import json
+import networkx as nx
+import random
 import sys
+import uuid
+
+random.seed(0)
+
+def get_uuid() -> str:
+    return str(uuid.UUID(int=random.getrandbits(128), version=4))
+
+def print_structure(cwl_file: CWLFile) -> None:
+    found: bool = False
+    if cwl_file.cwl_class == "Workflow":
+        for step_name, step_file in cwl_file.step_files.items():
+            if step_file.cwl_class == "Workflow":
+                found = True        
+                break
+        if not found:
+            print(f"{cwl_file.cwl_name} is a Workflow and has no subworkflows!")
+            input_sources_dict: Dict[str, Any] = nx.get_node_attributes(
+                cwl_file.dag, "input_sources"
+            )
+            print(json.dumps(input_sources_dict, indent=4))
+            dataflows_d: Dict[(str, str), Dataflow] = {} 
+            dataflows: Set[Dataflow] = set()
+            for step_name, dicts in input_sources_dict.items():
+                sink_d: Dict[str, Dict[str, str]] = dicts['in_sink_dict']
+                dest_step: Step = Step(step_name, is_tool=True, tool=Tool(step_name))
+                predecessors: List[str] = list(dicts['in_emit_dict'].keys())
+                source_d: Dict[str, Step] = {pred: Step(pred, True, Tool(pred)) for pred in predecessors}
+                for k, v in sink_d.items():
+                    datum: Datum = Datum(get_uuid())
+                    source_step: Step = source_d[v['step_source']]
+                    if (source_step.name, dest_step.name) not in dataflows_d:
+                        dataflows_d[(source_step.name, dest_step.name)] = Dataflow(source_step, dest_step, datum)
+                    else:
+                        dataflows_d[(source_step.name, dest_step.name)].add_data(datum)
+                    source_step.register_output(datum, v['emit_source'])
+                    dest_step.register_input(datum, k)
+                
+            print(dataflows_d)
+
 
 if __name__ == "__main__":
     cwl_path = sys.argv[1]
@@ -14,13 +58,14 @@ if __name__ == "__main__":
     )
 
     if cwl_file.cwl_class == "Workflow":
-        all_step_file = cwl_file.collect_step_file_recursive()
+        all_step_file: Dict[str, CWLStep] = cwl_file.collect_step_file_recursive()
         for step_id, step_file in all_step_file.items():
             step_file.print_template_header()
             step_file.print_params_declaration()
             step_file.print_body()
+            print_structure(step_file)
 
-        # We need to the dependencies after adding all step files
+        # We need to update the dependencies after adding all step files
         cwl_file.update_self()
 
         cwl_file.print_template_header()
