@@ -25,11 +25,9 @@ def print_structure(cwl_file: CWLFile) -> None:
                 found = True        
                 break
         if not found:
-            print(f"{cwl_file.cwl_name} is a Workflow and has no subworkflows!")
             input_sources_dict: Dict[str, Any] = nx.get_node_attributes(
                 cwl_file.dag, "input_sources"
             )
-            print(json.dumps(input_sources_dict, indent=4))
             dataflows_d: Dict[(str, str), Dataflow] = {} 
             dataflows: Set[Dataflow] = set()
             for step_name, dicts in input_sources_dict.items():
@@ -47,8 +45,8 @@ def print_structure(cwl_file: CWLFile) -> None:
                     source_step.register_output(datum, v['emit_source'])
                     dest_step.register_input(datum, k)
                 
-            print(dataflows_d)
-
+            workflow: Workflow = Workflow(cwl_file.cwl_name, dataflows_d.values())
+            workflow.get_flattened_structure()
 
 if __name__ == "__main__":
     cwl_path = sys.argv[1]
