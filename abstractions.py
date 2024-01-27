@@ -101,12 +101,13 @@ class Workflow(Step):
             nx.DiGraph: structure DAG.
         """
         g_flat_structure: nx.DiGraph = self.get_structure()
-        logger.info(f"{g_flat_structure.nodes}")
+        for node in g_flat_structure.nodes:
+            if node.is_tool:
+                logger.info(f"{node.name}")
         for step in g_flat_structure.nodes:
             if isinstance(step, Workflow):
                 inflows: Dict[Dataflow] = self.get_input_dataflows(self.structure, step)
                 outflows: Dict[Dataflow] = self.get_output_dataflows(self.structure, step)
-                print(f"{step} is a Workflow and has inflows={inflows}, outflows={outflows}")
                 self.replace_inflows_destinations(self.structure, inflows, g_flat_structure)
                 self.replace_outflows_sources(self.structure, outflows, g_flat_structure)
 
