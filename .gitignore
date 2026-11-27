@@ -5,6 +5,7 @@
 *.sh
 *.csv
 *.nf
+*.log
 
 docs/build/
 libs/

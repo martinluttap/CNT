@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 
 # Argument parsing
-parser = ArgumentParser(description="Automated CWL <-> X Translator")
+parser = ArgumentParser(description="Automated CWL <-> NF Translator")
 parser.add_argument("cwl_source", help="Source CWL file")
 
 parser.add_argument(

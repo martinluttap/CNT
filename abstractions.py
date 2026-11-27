@@ -91,6 +91,7 @@ class Workflow(Step):
             destination: Step = connection.destination
             g_structure.add_nodes_from([source, destination])
             g_structure.add_edge(source, destination)
+            logger.info(f"{connection}")
 
         return g_structure
 
@@ -101,9 +102,6 @@ class Workflow(Step):
             nx.DiGraph: structure DAG.
         """
         g_flat_structure: nx.DiGraph = self.get_structure()
-        for node in g_flat_structure.nodes:
-            if node.is_tool:
-                logger.info(f"{node.name}")
         for step in g_flat_structure.nodes:
             if isinstance(step, Workflow):
                 inflows: Dict[Dataflow] = self.get_input_dataflows(self.structure, step)
