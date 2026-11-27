@@ -9,7 +9,9 @@ CNT uses the following packages: *cwl-utils*, *networkx*, *sphinx* (for document
 pip3 install -r requirements.txt
 ```
 ## Usage
-TBD.
+```
+python3 main.py <path_to_cwl_file> --export-to-dir <output_directory>
+```
 
 ## Notes
 
