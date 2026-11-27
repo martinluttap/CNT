@@ -4,12 +4,10 @@ CNT is a semi-automatic translator which performs both tool-level and workflow-l
 CNT utilizes [https://github.com/common-workflow-language/cwl-utils](cwl-utils), a library of classes for manipulating CWL files, to transform them into an intermediate representation (e.g. JSON) then proceed to rearrange it according to [https://nextflow-io.github.io/patterns/](patterns) devised by Nextflow's community.
 
 ## Installation
+TBD. 
 
 ## Usage
-
-## Development
-
-## Release
+TBD.
 
 ## Notes
 
