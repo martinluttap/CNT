@@ -5,12 +5,15 @@
 *.sh
 *.csv
 *.nf
+*.log
 
+docs/build/
 libs/
+*__pycache__*
 
 .DS_Store
 .python-version
 
-# Except templates
 !templates/*
 !libs/DAGDrawer.py
+!requirements.txt
